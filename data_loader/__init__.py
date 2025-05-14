@@ -46,18 +46,19 @@ class DataHandler:
         dataset = dataset_dict[self.args.dataset]
         if downsample is not None:
             split_dataset = dataset(
-                data_dir, split=split, downsample=downsample
+                data_dir,
+                eval=self.args.eval,
+                split=split,
+                downsample=downsample,
             )
         else:
-            split_dataset = dataset(data_dir, split=split)
+            split_dataset = dataset(data_dir, eval=self.args.eval, split=split)
         self.img_wh = split_dataset.img_wh
         self.fx = split_dataset.fx
         self.fy = split_dataset.fy
         self.c2ws = split_dataset.poses
         self.rays, self.rgbs = split_dataset.all_rays, split_dataset.all_rgbs
-        self.alphas = getattr(
-            split_dataset, "all_alphas", torch.ones_like(self.rgbs[..., 0:1])
-        )
+        self.alphas = split_dataset.all_alphas
 
         self.viewer_up = get_up(self.c2ws)
         self.viewer_pos = self.c2ws[0, :3, 3]

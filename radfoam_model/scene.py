@@ -87,10 +87,15 @@ class RadFoamScene(torch.nn.Module):
 
     def initialize_from_pcd(self, points, points_colors):
         points = points.to(self.device)
+        points_mean = points.mean(dim=0, keepdim=True)
+        points_std = points.std(dim=0, keepdim=True)
         points_colors = points_colors.to(self.device)
 
         num_random = 5_000
-        random = torch.randn([num_random, 3], device=self.device) * 10
+        random = (
+            torch.randn([num_random, 3], device=self.device) * points_std * 3
+            + points_mean
+        )
 
         num_samples = int(0.9 * points.shape[0])
         print(

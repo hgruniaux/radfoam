@@ -21,11 +21,12 @@ def get_cam_ray_dirs(camera):
 
 
 class COLMAPDataset:
-    def __init__(self, datadir, split, downsample):
+    def __init__(self, datadir, eval=True, split="train", downsample=1):
         assert downsample in [1, 2, 4, 8]
 
         self.root_dir = datadir
         self.colmap_dir = os.path.join(datadir, "sparse/0/")
+        self.eval = eval
         self.split = split
         self.downsample = downsample
 
@@ -46,11 +47,11 @@ class COLMAPDataset:
         names = sorted(im.name for im in self.reconstruction.images.values())
         indices = np.arange(len(names))
 
-        if split == "train":
+        if split == "train" and eval:
             names = list(np.array(names)[indices % 8 != 0])
-        elif split == "test":
+        elif split == "test" and eval:
             names = list(np.array(names)[indices % 8 == 0])
-        else:
+        elif eval:
             raise ValueError(f"Invalid split: {split}")
 
         names = list(str(name) for name in names)
@@ -85,6 +86,7 @@ class COLMAPDataset:
         self.poses = []
         self.all_rays = []
         self.all_rgbs = []
+        self.all_alphas = []
         for image in tqdm(self.images):
             c2w = torch.tensor(
                 image.cam_from_world.inverse().matrix(), dtype=torch.float32
@@ -100,16 +102,26 @@ class COLMAPDataset:
             world_rays = world_rays.reshape(self.img_wh[1], self.img_wh[0], 6)
 
             im = Image.open(os.path.join(images_dir, image.name))
-            im = im.convert("RGB")
-            rgbs = torch.tensor(np.array(im), dtype=torch.float32) / 255.0
+            if np.array(im).shape[-1] == 4:
+                im = im.convert("RGBA")
+                rgbas = torch.tensor(np.array(im), dtype=torch.float32) / 255.0
+                alphas = rgbas[..., 3:4]
+                rgbs = rgbas[..., :3] * alphas + (1 - alphas)
+            else:
+                im = im.convert("RGB")
+                rgbs = torch.tensor(np.array(im), dtype=torch.float32) / 255.0
+                alphas = torch.ones_like(rgbs[..., :1])
+
             im.close()
 
             self.all_rays.append(world_rays)
             self.all_rgbs.append(rgbs)
+            self.all_alphas.append(alphas)
 
         self.poses = torch.stack(self.poses)
         self.all_rays = torch.stack(self.all_rays)
         self.all_rgbs = torch.stack(self.all_rgbs)
+        self.all_alphas = torch.stack(self.all_alphas)
 
         self.points3D = []
         self.points3D_color = []

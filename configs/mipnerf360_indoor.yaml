@@ -29,6 +29,7 @@ freeze_points: 18_000                  # Points are frozen after this cycle
 dataset: "colmap"
 data_path: "data/mipnerf360"
 scene: "bonsai"
+eval: true                             # Flag to with-hold eval split
 patch_based: false
 downsample: [4, 2]                     # Image downsample factors
 downsample_iterations: [0, 5_000]

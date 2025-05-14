@@ -84,6 +84,7 @@ class DatasetParams(ParamGroup):
         self.dataset = "colmap"
         self.data_path = "data/mipnerf360"
         self.scene = "bonsai"
+        self.eval = False
         self.patch_based = False
         self.downsample = [4, 2, 1]
         self.downsample_iterations = [0, 150, 500]

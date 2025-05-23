@@ -9,7 +9,22 @@
 #include "sh_utils.cuh"
 #include "tracing_utils.cuh"
 
+#define USE_ALPHA_SIGMOID
+
 namespace radfoam {
+
+#ifdef USE_ALPHA_SIGMOID
+constexpr float ALPHA_SIGMOID_CENTER = 0.5f;
+constexpr float ALPHA_SIGMOID_SLOPE = 100.0f;
+
+__device__ inline float alpha_sigmoid(float x) {
+    return 1.0f / (1.0f + expf(-ALPHA_SIGMOID_SLOPE * (x - ALPHA_SIGMOID_CENTER)));
+}
+
+__device__ inline float alpha_sigmoid_deriv(float alpha_sigmoid_x) {
+    return ALPHA_SIGMOID_SLOPE * alpha_sigmoid_x * (1.0f - alpha_sigmoid_x);
+}
+#endif
 
 template <typename attr_scalar, int sh_degree, int block_size>
 __global__ void forward(TraceSettings settings,
@@ -74,7 +89,12 @@ __global__ void forward(TraceSettings settings,
         load_attributes(point_idx, rgb_primal, s_primal);
 
         float delta_t = fmaxf(t_1 - t_0, 0.0f);
-        float alpha = 1 - expf(-s_primal * delta_t);
+        float alpha_base = 1 - expf(-s_primal * delta_t);
+#ifdef USE_ALPHA_SIGMOID
+        float alpha = alpha_sigmoid(alpha_base);
+#else
+        float alpha = alpha_base;
+#endif
         float weight = transmittance * alpha;
 
         if (point_contribution) {
@@ -227,13 +247,21 @@ __global__ void backward(TraceSettings settings,
         load_attributes(point_idx, rgb_primal, s_primal);
 
         float delta_t = fmaxf(t_1 - t_0, 0.0f);
-        float alpha = 1 - expf(-s_primal * delta_t);
+        float base_alpha = 1 - expf(-s_primal * delta_t);
+    #ifdef USE_ALPHA_SIGMOID
+        float alpha = alpha_sigmoid(base_alpha);
+        float alpha_grad = alpha_sigmoid_deriv(alpha);
+    #else
+        float alpha = base_alpha;
+        float alpha_grad = 1.0f;
+    #endif
         float weight = transmittance * alpha;
-        float dalpha_ds_primal = delta_t * (1 - alpha);
+        float dalpha_ds_primal = alpha_grad * delta_t * (1 - alpha);
         float dalpha_ddelta_t = 0.0f;
         if (delta_t > 0.0f) {
-            dalpha_ddelta_t = s_primal * (1 - alpha);
+            dalpha_ddelta_t = alpha_grad * s_primal * (1 - alpha);
         }
+
 
         accumulated_rgb += weight * rgb_primal;
         if (point_error) {
@@ -400,7 +428,12 @@ visualization(TraceSettings settings,
         load_attributes(point_idx, rgb_primal, s_primal);
 
         float delta_t = fmaxf(t_1 - t_0, 0.0f);
-        float alpha = 1 - expf(-s_primal * delta_t);
+        float alpha_base = 1 - expf(-s_primal * delta_t);
+#ifdef USE_ALPHA_SIGMOID
+        float alpha = alpha_sigmoid(alpha_base);
+#else
+        float alpha = alpha_base;
+#endif
 
         accumulated_rgb += transmittance * alpha * rgb_primal;
 
@@ -522,7 +555,12 @@ __global__ void benchmark(TraceSettings settings,
         load_attributes(point_idx, rgb_primal, s_primal);
 
         float delta_t = fmaxf(t_1 - t_0, 0.0f);
-        float alpha = 1 - expf(-s_primal * delta_t);
+        float alpha_base = 1 - expf(-s_primal * delta_t);
+#ifdef USE_ALPHA_SIGMOID
+        float alpha = alpha_sigmoid(alpha_base);
+#else
+        float alpha = alpha_base;
+#endif
 
         accumulated_rgb += transmittance * alpha * rgb_primal;
         transmittance = transmittance * (1 - alpha);
@@ -787,6 +825,7 @@ std::shared_ptr<Pipeline> create_pipeline(int sh_degree, ScalarType attr_type) {
         } else {
             throw std::runtime_error("Unsupported SH degree");
         }
+#if 0 // Disable half support because the server cluster's CUDA version do not seem to support it
     } else if (attr_type == ScalarType::Float16) {
         if (sh_degree == 0) {
             return std::make_shared<CUDATracingPipeline<__half, 0>>();
@@ -799,6 +838,7 @@ std::shared_ptr<Pipeline> create_pipeline(int sh_degree, ScalarType attr_type) {
         } else {
             throw std::runtime_error("Unsupported SH degree");
         }
+#endif
     } else {
         throw std::runtime_error("Unsupported attribute type");
     }

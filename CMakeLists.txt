@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.27)
 project(RadFoam VERSION 1.0.0)
 
+set(CMAKE_CUDA_ARCHITECTURES native)
+
 cmake_policy(SET CMP0060 NEW)
 
 enable_language(CUDA)

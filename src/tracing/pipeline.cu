@@ -9,13 +9,11 @@
 #include "sh_utils.cuh"
 #include "tracing_utils.cuh"
 
-#define USE_ALPHA_SIGMOID
-
 namespace radfoam {
 
-#ifdef USE_ALPHA_SIGMOID
-constexpr float ALPHA_SIGMOID_CENTER = 0.5f;
-constexpr float ALPHA_SIGMOID_SLOPE = 100.0f;
+#if ENABLE_ALPHA_CRUSHING
+constexpr float ALPHA_SIGMOID_CENTER = 0.0f;
+constexpr float ALPHA_SIGMOID_SLOPE = 1000.0f;
 
 __device__ inline float alpha_sigmoid(float x) {
     return 1.0f / (1.0f + expf(-ALPHA_SIGMOID_SLOPE * (x - ALPHA_SIGMOID_CENTER)));
@@ -24,7 +22,7 @@ __device__ inline float alpha_sigmoid(float x) {
 __device__ inline float alpha_sigmoid_deriv(float alpha_sigmoid_x) {
     return ALPHA_SIGMOID_SLOPE * alpha_sigmoid_x * (1.0f - alpha_sigmoid_x);
 }
-#endif
+#endif // ENABLE_ALPHA_CRUSHING
 
 template <typename attr_scalar, int sh_degree, int block_size>
 __global__ void forward(TraceSettings settings,
@@ -90,7 +88,7 @@ __global__ void forward(TraceSettings settings,
 
         float delta_t = fmaxf(t_1 - t_0, 0.0f);
         float alpha_base = 1 - expf(-s_primal * delta_t);
-#ifdef USE_ALPHA_SIGMOID
+#if ENABLE_ALPHA_CRUSHING
         float alpha = alpha_sigmoid(alpha_base);
 #else
         float alpha = alpha_base;
@@ -248,7 +246,7 @@ __global__ void backward(TraceSettings settings,
 
         float delta_t = fmaxf(t_1 - t_0, 0.0f);
         float base_alpha = 1 - expf(-s_primal * delta_t);
-    #ifdef USE_ALPHA_SIGMOID
+    #if ENABLE_ALPHA_CRUSHING
         float alpha = alpha_sigmoid(base_alpha);
         float alpha_grad = alpha_sigmoid_deriv(alpha);
     #else
@@ -429,7 +427,7 @@ visualization(TraceSettings settings,
 
         float delta_t = fmaxf(t_1 - t_0, 0.0f);
         float alpha_base = 1 - expf(-s_primal * delta_t);
-#ifdef USE_ALPHA_SIGMOID
+#if ENABLE_ALPHA_CRUSHING
         float alpha = alpha_sigmoid(alpha_base);
 #else
         float alpha = alpha_base;
@@ -556,7 +554,7 @@ __global__ void benchmark(TraceSettings settings,
 
         float delta_t = fmaxf(t_1 - t_0, 0.0f);
         float alpha_base = 1 - expf(-s_primal * delta_t);
-#ifdef USE_ALPHA_SIGMOID
+#if ENABLE_ALPHA_CRUSHING
         float alpha = alpha_sigmoid(alpha_base);
 #else
         float alpha = alpha_base;
@@ -825,8 +823,8 @@ std::shared_ptr<Pipeline> create_pipeline(int sh_degree, ScalarType attr_type) {
         } else {
             throw std::runtime_error("Unsupported SH degree");
         }
-#if 0 // Disable half support because the server cluster's CUDA version do not seem to support it
     } else if (attr_type == ScalarType::Float16) {
+#if ENABLE_HALF_PRECISION // Disable half support because the server cluster's CUDA version do not seem to support it
         if (sh_degree == 0) {
             return std::make_shared<CUDATracingPipeline<__half, 0>>();
         } else if (sh_degree == 1) {
@@ -838,6 +836,8 @@ std::shared_ptr<Pipeline> create_pipeline(int sh_degree, ScalarType attr_type) {
         } else {
             throw std::runtime_error("Unsupported SH degree");
         }
+#else
+        throw std::runtime_error("Compiled without half precision support, add -DENABLE_HALF_PRECISION=1 to enable");
 #endif
     } else {
         throw std::runtime_error("Unsupported attribute type");

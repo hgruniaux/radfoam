@@ -13,6 +13,9 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
+add_compile_definitions(ENABLE_HALF_PRECISION=1)
+add_compile_definitions(ENABLE_ALPHA_CRUSHING=1)
+
 set(GPU_DEBUG
     ON
     CACHE BOOL "Enable GPU debug features")

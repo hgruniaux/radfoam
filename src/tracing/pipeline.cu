@@ -12,8 +12,8 @@
 namespace radfoam {
 
 #if ENABLE_ALPHA_CRUSHING
-constexpr float ALPHA_SIGMOID_CENTER = 0.0f;
-constexpr float ALPHA_SIGMOID_SLOPE = 1000.0f;
+constexpr float ALPHA_SIGMOID_CENTER = 0.5f;
+constexpr float ALPHA_SIGMOID_SLOPE = 100.0f;
 
 __device__ inline float alpha_sigmoid(float x) {
     return 1.0f / (1.0f + expf(-ALPHA_SIGMOID_SLOPE * (x - ALPHA_SIGMOID_CENTER)));

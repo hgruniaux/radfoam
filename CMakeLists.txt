@@ -13,8 +13,23 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
-add_compile_definitions(ENABLE_HALF_PRECISION=1)
-add_compile_definitions(ENABLE_ALPHA_CRUSHING=1)
+set(ENABLE_HALF_PRECISION ON CACHE BOOL "Enable half precision")
+if(ENABLE_HALF_PRECISION)
+  message(STATUS "Half precision enabled")
+  add_compile_definitions(ENABLE_HALF_PRECISION=1)
+else()
+  message(STATUS "Half precision disabled")
+  add_compile_definitions(ENABLE_HALF_PRECISION=0)
+endif()
+
+set(ENABLE_ALPHA_CRUSHING ON CACHE BOOL "Enable alpha crushing")
+if(ENABLE_ALPHA_CRUSHING)
+  message(STATUS "Alpha crushing enabled")
+  add_compile_definitions(ENABLE_ALPHA_CRUSHING=1)
+else()
+  message(STATUS "Alpha crushing disabled")
+  add_compile_definitions(ENABLE_ALPHA_CRUSHING=0)
+endif()
 
 set(GPU_DEBUG
     ON

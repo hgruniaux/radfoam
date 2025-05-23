@@ -12,7 +12,7 @@ if(TORCH_CUDA_VERSION VERSION_EQUAL CUDA_VERSION_STRING)
   message(STATUS "CUDA version is: ${CUDA_VERSION_STRING}")
 else()
   message(
-    FATAL_ERROR
+    WARNING
       "CUDA version found (${CUDA_VERSION_STRING}) does not match the version required by PyTorch (${TORCH_CUDA_VERSION})."
   )
 endif()

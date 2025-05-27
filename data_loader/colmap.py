@@ -31,11 +31,18 @@ class COLMAPDataset:
 
         if downsample == 1:
             images_dir = os.path.join(datadir, "images")
+            semantic_dir = os.path.join(datadir, "semantic")
         else:
             images_dir = os.path.join(datadir, f"images_{downsample}")
+            semantic_dir = os.path.join(datadir, f"semantic_{downsample}")
 
         if not os.path.exists(images_dir):
             raise ValueError(f"Images directory {images_dir} not found")
+        
+        has_semantic_data = True
+        if not os.path.exists(semantic_dir):
+            has_semantic_data = False
+            print("The dataset has no semantic data")
 
         self.reconstruction = pycolmap.Reconstruction()
         self.reconstruction.read(self.colmap_dir)
@@ -85,6 +92,11 @@ class COLMAPDataset:
         self.poses = []
         self.all_rays = []
         self.all_rgbs = []
+        if has_semantic_data:
+            self.all_semas = []
+        else:
+            self.all_semas = None
+
         for image in tqdm(self.images):
             c2w = torch.tensor(
                 image.cam_from_world.inverse().matrix(), dtype=torch.float32
@@ -104,12 +116,22 @@ class COLMAPDataset:
             rgbs = torch.tensor(np.array(im), dtype=torch.float32) / 255.0
             im.close()
 
+            if has_semantic_data:
+                sema = Image.open(os.path.join(semantic_dir, image.name))
+                sema = sema.convert("RGB")
+                semas = torch.tensor(np.array(sema), dtype=torch.float32) / 255.0
+                sema.close()
+                self.all_semas.append(semas)
+
             self.all_rays.append(world_rays)
             self.all_rgbs.append(rgbs)
 
         self.poses = torch.stack(self.poses)
         self.all_rays = torch.stack(self.all_rays)
         self.all_rgbs = torch.stack(self.all_rgbs)
+
+        if has_semantic_data:
+            self.all_semas = torch.stack(self.all_semas)
 
         self.points3D = []
         self.points3D_color = []

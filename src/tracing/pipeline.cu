@@ -87,7 +87,11 @@ __global__ void forward(TraceSettings settings,
         load_attributes(point_idx, rgb_primal, s_primal);
 
         float delta_t = fmaxf(t_1 - t_0, 0.0f);
+#if ENABLE_SQUARED_DENSITY
+        float alpha_base = 1 - expf(-s_primal * s_primal * delta_t);
+#else
         float alpha_base = 1 - expf(-s_primal * delta_t);
+#endif
 #if ENABLE_ALPHA_CRUSHING
         float alpha = alpha_sigmoid(alpha_base);
 #else
@@ -245,7 +249,11 @@ __global__ void backward(TraceSettings settings,
         load_attributes(point_idx, rgb_primal, s_primal);
 
         float delta_t = fmaxf(t_1 - t_0, 0.0f);
+#if ENABLE_SQUARED_DENSITY
+        float base_alpha = 1 - expf(-s_primal * s_primal * delta_t);
+#else
         float base_alpha = 1 - expf(-s_primal * delta_t);
+#endif
     #if ENABLE_ALPHA_CRUSHING
         float alpha = alpha_sigmoid(base_alpha);
         float alpha_grad = alpha_sigmoid_deriv(alpha);
@@ -254,11 +262,19 @@ __global__ void backward(TraceSettings settings,
         float alpha_grad = 1.0f;
     #endif
         float weight = transmittance * alpha;
+#if ENABLE_SQUARED_DENSITY
+        float dalpha_ds_primal = 2.0f * alpha_grad * s_primal * delta_t * (1 - alpha);
+        float dalpha_ddelta_t = 0.0f;
+        if (delta_t > 0.0f) {
+            dalpha_ddelta_t = alpha_grad * s_primal * s_primal * (1 - alpha);
+        }
+#else
         float dalpha_ds_primal = alpha_grad * delta_t * (1 - alpha);
         float dalpha_ddelta_t = 0.0f;
         if (delta_t > 0.0f) {
             dalpha_ddelta_t = alpha_grad * s_primal * (1 - alpha);
         }
+#endif
 
 
         accumulated_rgb += weight * rgb_primal;
@@ -426,7 +442,11 @@ visualization(TraceSettings settings,
         load_attributes(point_idx, rgb_primal, s_primal);
 
         float delta_t = fmaxf(t_1 - t_0, 0.0f);
+#if ENABLE_SQUARED_DENSITY
+        float alpha_base = 1 - expf(-s_primal * s_primal * delta_t);
+#else
         float alpha_base = 1 - expf(-s_primal * delta_t);
+#endif
 #if ENABLE_ALPHA_CRUSHING
         float alpha = alpha_sigmoid(alpha_base);
 #else
@@ -553,7 +573,11 @@ __global__ void benchmark(TraceSettings settings,
         load_attributes(point_idx, rgb_primal, s_primal);
 
         float delta_t = fmaxf(t_1 - t_0, 0.0f);
+#if ENABLE_SQUARED_DENSITY
+        float alpha_base = 1 - expf(-s_primal * s_primal * delta_t);
+#else
         float alpha_base = 1 - expf(-s_primal * delta_t);
+#endif
 #if ENABLE_ALPHA_CRUSHING
         float alpha = alpha_sigmoid(alpha_base);
 #else

@@ -31,6 +31,15 @@ else()
   add_compile_definitions(ENABLE_ALPHA_CRUSHING=0)
 endif()
 
+set(ENABLE_SQUARED_DENSITY ON CACHE BOOL "Enable squared density")
+if(ENABLE_SQUARED_DENSITY)
+  message(STATUS "Squared density enabled")
+  add_compile_definitions(ENABLE_SQUARED_DENSITY=1)
+else()
+  message(STATUS "Squared density disabled")
+  add_compile_definitions(ENABLE_SQUARED_DENSITY=0)
+endif()
+
 set(GPU_DEBUG
     ON
     CACHE BOOL "Enable GPU debug features")

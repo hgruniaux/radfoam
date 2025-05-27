@@ -102,7 +102,7 @@ def train(args, pipeline_args, model_args, optimizer_args, dataset_args):
     )
 
     def test_render(
-        test_data_handler, ray_batch_fetcher, rgb_batch_fetcher, debug=False
+        test_data_handler, ray_batch_fetcher, rgb_batch_fetcher, suffix="final", debug=False
     ):
         rays = test_data_handler.rays
         points, _, _, _ = model.get_trace_data()
@@ -135,7 +135,7 @@ def train(args, pipeline_args, model_args, optimizer_args, dataset_args):
                         np.concatenate([rgb_output, rgb_batch, error], axis=1)
                     )
                     im.save(
-                        f"{out_dir}/test/rgb_{i:03d}_psnr_{img_psnr:.3f}.png"
+                        f"{out_dir}/test/rgb_{i:03d}_{suffix}.png"
                     )
 
         average_psnr = sum(psnr_list) / len(psnr_list)
@@ -226,7 +226,8 @@ def train(args, pipeline_args, model_args, optimizer_args, dataset_args):
                         test_data_handler,
                         test_ray_batch_fetcher,
                         test_rgb_batch_fetcher,
-                        True,
+                        str(i),
+                        pipeline_args.debug,
                     )
                     writer.add_scalar("test/psnr", test_psnr, i)
 
@@ -309,6 +310,7 @@ def train(args, pipeline_args, model_args, optimizer_args, dataset_args):
         test_data_handler,
         test_ray_batch_fetcher,
         test_rgb_batch_fetcher,
+        "final",
         pipeline_args.debug,
     )
 

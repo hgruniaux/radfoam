@@ -99,6 +99,19 @@ class Pipeline {
                                 void *attribute_grad,
                                 void *point_error) = 0;
 
+    virtual void trace_probe(const TraceSettings &settings,
+                               uint32_t num_points,
+                               const Vec3f *points,
+                               void *attributes,
+                               uint32_t point_adjacency_size,
+                               const uint32_t *point_adjacency,
+                               const uint32_t *point_adjacency_offsets,
+                               uint32_t num_rays,
+                               const Ray *rays,
+                               const uint32_t *start_point_index,
+                               uint32_t *__restrict__ intersected_cells,
+                               void *__restrict__ intersected_contributions) = 0;
+
     virtual void trace_visualization(const TraceSettings &settings,
                                      const VisualizationSettings &vis_settings,
                                      const Camera &camera,

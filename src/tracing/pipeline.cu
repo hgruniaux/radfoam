@@ -24,6 +24,22 @@ __device__ inline float alpha_sigmoid_deriv(float alpha_sigmoid_x) {
 }
 #endif // ENABLE_ALPHA_CRUSHING
 
+__device__ inline float compute_alpha(float s_primal, float delta_t) {
+#if ENABLE_SQUARED_DENSITY
+    const float base_alpha = 1 - expf(-s_primal * s_primal * delta_t);
+#else
+    const float base_alpha = 1 - expf(-s_primal * delta_t);
+#endif
+
+#if ENABLE_ALPHA_CRUSHING
+    const float alpha = alpha_sigmoid(base_alpha);
+#else
+    const float alpha = base_alpha;
+#endif
+
+    return alpha;
+}
+
 template <typename attr_scalar, int sh_degree, int block_size>
 __global__ void forward(TraceSettings settings,
                         const Vec3f *__restrict__ points,
@@ -87,16 +103,7 @@ __global__ void forward(TraceSettings settings,
         load_attributes(point_idx, rgb_primal, s_primal);
 
         float delta_t = fmaxf(t_1 - t_0, 0.0f);
-#if ENABLE_SQUARED_DENSITY
-        float alpha_base = 1 - expf(-s_primal * s_primal * delta_t);
-#else
-        float alpha_base = 1 - expf(-s_primal * delta_t);
-#endif
-#if ENABLE_ALPHA_CRUSHING
-        float alpha = alpha_sigmoid(alpha_base);
-#else
-        float alpha = alpha_base;
-#endif
+        float alpha = compute_alpha(s_primal, delta_t);
         float weight = transmittance * alpha;
 
         if (point_contribution) {
@@ -151,6 +158,7 @@ __global__ void forward(TraceSettings settings,
         num_intersections[thread_idx] = n;
 }
 
+#pragma region Backward Pass
 template <typename attr_scalar, int sh_degree, int block_size>
 __global__ void backward(TraceSettings settings,
                          const Vec3f *__restrict__ points,
@@ -383,6 +391,120 @@ __global__ void backward(TraceSettings settings,
                          settings.max_intersections,
                          functor);
 }
+#pragma endregion
+
+template <typename attr_scalar, int sh_degree, int block_size>
+__global__ void probe(TraceSettings settings,
+                        const Vec3f *__restrict__ points,
+                        attr_scalar *__restrict__ attributes,
+                        const uint32_t *__restrict__ point_adjacency,
+                        const uint32_t *__restrict__ point_adjacency_offsets,
+                        const Vec4h *__restrict__ adjacent_diff,
+                        const Ray *__restrict__ rays,
+                        uint32_t num_rays,
+                        const uint32_t *__restrict__ start_point_index,
+                        uint32_t *__restrict__ intersected_cells,
+                        attr_scalar *__restrict__ intersected_contributions) {
+
+    uint32_t thread_idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (thread_idx >= num_rays)
+        return;
+
+    constexpr int sh_dim = 3 * (1 + sh_degree) * (1 + sh_degree);
+    constexpr int attr_memory_size = 1 + sh_dim;
+
+    Ray ray = rays[thread_idx];
+    ray.direction /= ray.direction.norm();
+
+    auto sh_coeffs = sh_coefficients<sh_degree>(ray.direction);
+
+    auto load_attributes = [&](uint32_t v_idx, Vec3f &rgb, float &s) {
+        const attr_scalar *attr_ptr = attributes + v_idx * attr_memory_size;
+        s = (float)attr_ptr[attr_memory_size - 1];
+        if (s > 1e-6f) {
+            rgb = load_sh_as_rgb<attr_scalar, sh_degree>(sh_coeffs, attr_ptr);
+        } else {
+            rgb = Vec3f::Zero();
+        }
+    };
+
+    float transmittance = 1.0f;
+
+    uint32_t iter = 0;
+    auto functor = [&](uint32_t point_idx,
+                       float t_0,
+                       float t_1,
+                       const Vec3f &current_point,
+                       const Vec3f &next_point) {
+        Vec3f rgb_primal;
+        float s_primal;
+
+        load_attributes(point_idx, rgb_primal, s_primal);
+
+        float delta_t = fmaxf(t_1 - t_0, 0.0f);
+        float alpha = compute_alpha(s_primal, delta_t);
+        float next_transmittance = transmittance * (1 - alpha);
+
+        intersected_cells[settings.max_intersections * thread_idx + iter] = point_idx;
+        intersected_contributions[settings.max_intersections * thread_idx + iter] = transmittance - next_transmittance;
+        transmittance = next_transmittance;
+        iter += 1;
+
+        return transmittance > settings.weight_threshold;
+    };
+
+    uint32_t start_point = start_point_index[thread_idx];
+
+    uint32_t n = trace<block_size, 4>(ray,
+                                      points,
+                                      point_adjacency,
+                                      point_adjacency_offsets,
+                                      adjacent_diff,
+                                      start_point,
+                                      settings.max_intersections,
+                                      functor);
+
+    // We want to find the smallest interval [a,b] such that the sum of
+    // contributions in that interval is greater than some given tau. That is,
+    // we want to find the smallest interval of cells that contributes to 
+    // the final RGB color at least tau percents.
+    uint32_t a = 0;
+    uint32_t b = 0;
+    uint32_t min_a = 0;
+    uint32_t min_b = iter - 1;
+    attr_scalar contribution_sum = 0.0f;
+    attr_scalar tau = 0.9f;
+    for (b = 0; b < iter; ++b) {
+        contribution_sum += intersected_contributions[settings.max_intersections * thread_idx + b];
+
+        while (a <= b && contribution_sum >= tau) {
+            if ((min_b - min_a) > (b - a)) {
+                min_a = a;
+                min_b = b;
+            }
+
+            contribution_sum -= intersected_contributions[settings.max_intersections * thread_idx + a];
+            a += 1;
+        }
+    }
+
+    intersected_cells[settings.max_intersections * (thread_idx + 1) - 2] = min_a;
+    intersected_cells[settings.max_intersections * (thread_idx + 1) - 1] = min_b;
+
+    // Now that we have found the more contributing cells for this ray, we decrease the density
+    // of the cells before the interval (that is the cells [0, min_a - 1]), and increase the density
+    // of the cells in the interval [min_a, min_b].
+    for (uint32_t i = 0; i < min_a; ++i) {
+        uint32_t point_idx = intersected_cells[settings.max_intersections * thread_idx + i];
+        attr_scalar *attr_ptr = attributes + point_idx * attr_memory_size;
+        attr_ptr[attr_memory_size - 1] *= 0.5f; // Decrease density by half
+    }
+    for (uint32_t i = min_a; i <= min_b; ++i) {
+        uint32_t point_idx = intersected_cells[settings.max_intersections * thread_idx + i];
+        attr_scalar *attr_ptr = attributes + point_idx * attr_memory_size;
+        attr_ptr[attr_memory_size - 1] *= 2.0f; // Increase density by two times
+    }
+}
 
 template <typename attr_scalar, int sh_degree, int block_size>
 __global__ void
@@ -442,16 +564,7 @@ visualization(TraceSettings settings,
         load_attributes(point_idx, rgb_primal, s_primal);
 
         float delta_t = fmaxf(t_1 - t_0, 0.0f);
-#if ENABLE_SQUARED_DENSITY
-        float alpha_base = 1 - expf(-s_primal * s_primal * delta_t);
-#else
-        float alpha_base = 1 - expf(-s_primal * delta_t);
-#endif
-#if ENABLE_ALPHA_CRUSHING
-        float alpha = alpha_sigmoid(alpha_base);
-#else
-        float alpha = alpha_base;
-#endif
+        float alpha = compute_alpha(s_primal, delta_t);
 
         accumulated_rgb += transmittance * alpha * rgb_primal;
 
@@ -573,16 +686,7 @@ __global__ void benchmark(TraceSettings settings,
         load_attributes(point_idx, rgb_primal, s_primal);
 
         float delta_t = fmaxf(t_1 - t_0, 0.0f);
-#if ENABLE_SQUARED_DENSITY
-        float alpha_base = 1 - expf(-s_primal * s_primal * delta_t);
-#else
-        float alpha_base = 1 - expf(-s_primal * delta_t);
-#endif
-#if ENABLE_ALPHA_CRUSHING
-        float alpha = alpha_sigmoid(alpha_base);
-#else
-        float alpha = alpha_base;
-#endif
+        float alpha = compute_alpha(s_primal, delta_t);
 
         accumulated_rgb += transmittance * alpha * rgb_primal;
         transmittance = transmittance * (1 - alpha);
@@ -758,6 +862,46 @@ class CUDATracingPipeline : public Pipeline {
             points_grad,
             static_cast<attr_scalar *>(attribute_grad),
             static_cast<attr_scalar *>(point_error));
+    }
+
+    void trace_probe(const TraceSettings &settings,
+                       uint32_t num_points,
+                       const Vec3f *points,
+                       void *attributes,
+                       uint32_t point_adjacency_size,
+                       const uint32_t *point_adjacency,
+                       const uint32_t *point_adjacency_offsets,
+                       uint32_t num_rays,
+                       const Ray *rays,
+                       const uint32_t *start_point_index,
+                       uint32_t *__restrict__ intersected_cells,
+                       void *__restrict__ intersected_contributions) override {
+
+        CUDAArray<Vec4h> adjacent_diff(point_adjacency_size + 32);
+        prefetch_adjacent_diff(reinterpret_cast<const Vec3f *>(points),
+                               num_points,
+                               point_adjacency_size,
+                               point_adjacency,
+                               point_adjacency_offsets,
+                               adjacent_diff.begin(),
+                               nullptr);
+
+        constexpr uint32_t block_size = 128;
+        launch_kernel_1d<block_size>(
+            probe<attr_scalar, sh_degree, block_size>,
+            num_rays,
+            nullptr,
+            settings,
+            points,
+            reinterpret_cast<attr_scalar *>(attributes),
+            point_adjacency,
+            point_adjacency_offsets,
+            adjacent_diff.begin(),
+            rays,
+            num_rays,
+            start_point_index,
+            intersected_cells,
+            reinterpret_cast<attr_scalar *>(intersected_contributions));
     }
 
     void trace_visualization(const TraceSettings &settings,

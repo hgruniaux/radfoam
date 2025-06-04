@@ -215,6 +215,15 @@ def train(args, pipeline_args, model_args, optimizer_args, dataset_args):
                 model.optimizer.step()
                 model.update_learning_rate(i)
 
+                # Probe rays
+                if i >= pipeline_args.probe_from:
+                    sample_size = 0.025
+                    k = int(sample_size * ray_batch.size(0))
+                    perm = torch.randperm(ray_batch.size(0))
+                    idx = perm[:k]
+                    probe_ray_batch = ray_batch[idx]
+                    model.probe_rays(probe_ray_batch, max_intersections=100)
+
                 train.set_postfix(color_loss=f"{color_loss.mean().item():.5f}")
 
                 if i % 100 == 99 and not pipeline_args.debug:

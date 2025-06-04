@@ -496,6 +496,100 @@ py::object trace_backward(Pipeline &self,
     return output_dict;
 }
 
+py::object trace_probe(Pipeline &self,
+                         torch::Tensor points_in,
+                         torch::Tensor attributes_in,
+                         torch::Tensor point_adjacency_in,
+                         torch::Tensor point_adjacency_offsets_in,
+                         torch::Tensor rays_in,
+                         torch::Tensor start_point_in,
+                         py::object weight_threshold,
+                         py::object max_intersections) {
+    torch::Tensor points = points_in.contiguous();
+    torch::Tensor attributes = attributes_in.contiguous();
+    torch::Tensor point_adjacency = point_adjacency_in.contiguous();
+    torch::Tensor point_adjacency_offsets =
+        point_adjacency_offsets_in.contiguous();
+    torch::Tensor rays = rays_in.contiguous();
+    torch::Tensor start_point = start_point_in.contiguous();
+
+    validate_scene_data(self,
+                        points_in,
+                        attributes_in,
+                        point_adjacency_in,
+                        point_adjacency_offsets_in);
+
+    uint32_t num_points = points.size(0);
+    uint32_t point_adjacency_size = point_adjacency.size(0);
+    uint32_t num_rays = rays.numel() / 6;
+    uint32_t num_depth_quantiles = 0;
+
+    if (rays.size(-1) != 6) {
+        throw std::runtime_error("rays must have 6 as the last dimension");
+    }
+    if (rays.scalar_type() != at::kFloat) {
+        throw std::runtime_error("rays must have float32 dtype");
+    }
+    if (rays.device().type() != at::kCUDA) {
+        throw std::runtime_error("rays must be on CUDA device");
+    }
+
+    if (start_point.numel() != num_rays) {
+        throw std::runtime_error("start_point must have the same batch size "
+                                 "as rays");
+    }
+    if (start_point.scalar_type() != at::kUInt32) {
+        throw std::runtime_error("start_point must have uint32 dtype");
+    }
+    if (start_point.device().type() != at::kCUDA) {
+        throw std::runtime_error("start_point must be on CUDA device");
+    }
+
+    TraceSettings settings = default_trace_settings();
+    if (!weight_threshold.is_none()) {
+        settings.weight_threshold = weight_threshold.cast<float>();
+    }
+    if (!max_intersections.is_none()) {
+        settings.max_intersections = max_intersections.cast<uint32_t>();
+    }
+
+    std::vector<int64_t> output_shape;
+    for (int i = 0; i < rays.dim() - 1; i++) {
+        output_shape.push_back(rays.size(i));
+    }
+    output_shape.push_back(settings.max_intersections);
+
+    torch::Tensor output_intersected_cells =
+        torch::empty(output_shape,
+                     torch::dtype(scalar_to_type_meta(ScalarType::UInt32))
+                         .device(rays.device()));
+    torch::Tensor output_intersected_contributions =
+        torch::empty(output_shape,
+                     torch::dtype(scalar_to_type_meta(self.attribute_type()))
+                         .device(rays.device()));
+
+    set_default_stream();
+
+    self.trace_probe(
+        settings,
+        num_points,
+        reinterpret_cast<const radfoam::Vec3f *>(points.data_ptr()),
+        attributes.data_ptr(),
+        point_adjacency_size,
+        reinterpret_cast<const uint32_t *>(point_adjacency.data_ptr()),
+        reinterpret_cast<const uint32_t *>(point_adjacency_offsets.data_ptr()),
+        num_rays,
+        reinterpret_cast<const radfoam::Ray *>(rays.data_ptr()),
+        reinterpret_cast<const uint32_t *>(start_point.data_ptr()),
+        reinterpret_cast<uint32_t *>(output_intersected_cells.data_ptr()),
+        reinterpret_cast<void *>(output_intersected_contributions.data_ptr()));
+
+    py::dict output_dict;
+    output_dict["intersected_cells"] = output_intersected_cells;
+    output_dict["intersected_contributions"] = output_intersected_contributions;
+    return output_dict;
+}
+
 void trace_benchmark(Pipeline &self,
                      torch::Tensor points_in,
                      torch::Tensor attributes_in,
@@ -651,6 +745,16 @@ void init_pipeline_bindings(py::module &module) {
              py::arg("depth_indices") = py::none(),
              py::arg("depth_grad_in") = py::none(),
              py::arg("ray_error") = py::none(),
+             py::arg("weight_threshold") = py::none(),
+             py::arg("max_intersections") = py::none())
+        .def("trace_probe",
+             trace_probe,
+             py::arg("points"),
+             py::arg("attributes"),
+             py::arg("point_adjacency"),
+             py::arg("point_adjacency_offsets"),
+             py::arg("rays"),
+             py::arg("start_point"),
              py::arg("weight_threshold") = py::none(),
              py::arg("max_intersections") = py::none())
         .def("trace_benchmark",

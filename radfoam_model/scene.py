@@ -259,6 +259,32 @@ class RadFoamScene(torch.nn.Module):
             depth_quantiles,
             return_contribution,
         )
+    
+    def probe_rays(
+        self,
+        rays,
+        start_point=None,
+        max_intersections=None,
+    ):
+        points, attributes, point_adjacency, point_adjacency_offsets = (
+            self.get_trace_data()
+        )
+
+        if start_point is None:
+            start_point = self.get_starting_point(rays, points, self.aabb_tree)
+        else:
+            start_point = torch.broadcast_to(start_point, rays.shape[:-1])
+
+        results = self.pipeline.trace_probe(
+            points,
+            attributes,
+            point_adjacency,
+            point_adjacency_offsets,
+            rays,
+            start_point,
+            max_intersections=max_intersections)
+
+        return results
 
     def update_viewer(self, viewer):
         points, attributes, point_adjacency, point_adjacency_offsets = (

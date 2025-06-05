@@ -102,7 +102,7 @@ def train(args, pipeline_args, model_args, optimizer_args, dataset_args):
     )
 
     def test_render(
-        test_data_handler, ray_batch_fetcher, rgb_batch_fetcher, suffix="final", debug=False
+        test_data_handler, ray_batch_fetcher, rgb_batch_fetcher, suffix="final", debug=False, save_output=False
     ):
         rays = test_data_handler.rays
         points, _, _, _ = model.get_trace_data()
@@ -126,7 +126,7 @@ def train(args, pipeline_args, model_args, optimizer_args, dataset_args):
                 psnr_list.append(img_psnr)
                 torch.cuda.synchronize()
 
-                if not debug:
+                if not debug and save_output:
                     error = np.uint8((rgb_output - rgb_batch).cpu().abs() * 255)
                     rgb_output = np.uint8(rgb_output.cpu() * 255)
                     rgb_batch = np.uint8(rgb_batch.cpu() * 255)
@@ -237,6 +237,7 @@ def train(args, pipeline_args, model_args, optimizer_args, dataset_args):
                         test_rgb_batch_fetcher,
                         str(i),
                         pipeline_args.debug,
+                        i % 5000 == 0
                     )
                     writer.add_scalar("test/psnr", test_psnr, i)
 
@@ -321,6 +322,7 @@ def train(args, pipeline_args, model_args, optimizer_args, dataset_args):
         test_rgb_batch_fetcher,
         "final",
         pipeline_args.debug,
+        True # Save final output images
     )
 
 

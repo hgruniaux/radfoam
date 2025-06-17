@@ -147,7 +147,7 @@ def train(args, pipeline_args, model_args, optimizer_args, dataset_args):
         return average_psnr
 
     def train_loop(viewer):
-        print("Training")
+        print(f"Training (saving to {out_dir})")
 
         torch.cuda.synchronize()
 
@@ -217,8 +217,7 @@ def train(args, pipeline_args, model_args, optimizer_args, dataset_args):
 
                 # Probe rays
                 if i >= pipeline_args.probe_from:
-                    sample_size = 0.025
-                    k = int(sample_size * ray_batch.size(0))
+                    k = int(pipeline_args.probe_sample_size * ray_batch.size(0))
                     perm = torch.randperm(ray_batch.size(0))
                     idx = perm[:k]
                     probe_ray_batch = ray_batch[idx]

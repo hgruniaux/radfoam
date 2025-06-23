@@ -159,6 +159,14 @@ def train(args, pipeline_args, model_args, optimizer_args, dataset_args):
         iters_since_densification = 0
         next_densification_after = 1
 
+        loss_over_time = []
+        color_loss_over_time = []
+        opacity_loss_over_time = []
+        quant_loss_over_time = []
+        w_depth_over_time = []
+        num_points_over_time = []
+        test_psnr_over_time = []
+
         with tqdm.trange(pipeline_args.iterations) as train:
             for i in train:
                 if viewer is not None:
@@ -216,14 +224,24 @@ def train(args, pipeline_args, model_args, optimizer_args, dataset_args):
                 model.update_learning_rate(i)
 
                 # Probe rays
-                if i >= pipeline_args.probe_from:
+                if i >= pipeline_args.probe_from and ((i - pipeline_args.probe_from) % pipeline_args.probe_every == 0):
                     k = int(pipeline_args.probe_sample_size * ray_batch.size(0))
                     perm = torch.randperm(ray_batch.size(0))
                     idx = perm[:k]
                     probe_ray_batch = ray_batch[idx]
-                    model.probe_rays(probe_ray_batch, max_intersections=100)
+                    t = model.probe_rays(probe_ray_batch, max_intersections=100)
 
-                train.set_postfix(color_loss=f"{color_loss.mean().item():.5f}")
+                color_loss_mean = color_loss.mean().item()
+                train.set_postfix(color_loss=f"{color_loss_mean:.5f}")
+
+                loss_over_time.append(loss.item())
+                opacity_loss_over_time.append(opacity_loss.item())
+                quant_loss_over_time.append(quant_loss.item())
+                w_depth_over_time.append(w_depth)
+                color_loss_over_time.append(color_loss_mean)
+                num_points_over_time.append(model.primal_points.shape[0])
+                # test_psnr_over_time.append(test_psnr.item())
+                test_psnr_over_time.append(0)
 
                 if i % 100 == 99 and not pipeline_args.debug:
                     writer.add_scalar("train/rgb_loss", color_loss.mean(), i)
@@ -239,6 +257,8 @@ def train(args, pipeline_args, model_args, optimizer_args, dataset_args):
                         i % 5000 == 0
                     )
                     writer.add_scalar("test/psnr", test_psnr, i)
+
+                    
 
                     writer.add_scalar(
                         "lr/points_lr", model.xyz_scheduler_args(i), i
@@ -301,6 +321,15 @@ def train(args, pipeline_args, model_args, optimizer_args, dataset_args):
 
                 if viewer is not None and viewer.is_closed():
                     break
+
+        with open(f"{out_dir}/stats.csv", "w") as f:
+            f.write(
+                "iteration,loss,color_loss,opacity_loss,quant_loss,w_depth,num_points,test_psnr\n"
+            )
+            for i in range(len(loss_over_time)):
+                f.write(
+                    f"{i},{loss_over_time[i]},{color_loss_over_time[i]},{opacity_loss_over_time[i]},{quant_loss_over_time[i]},{w_depth_over_time[i]},{num_points_over_time[i]},{test_psnr_over_time[i]}\n"
+                )
 
         model.save_ply(f"{out_dir}/scene.ply")
         model.save_pt(f"{out_dir}/model.pt")

@@ -46,6 +46,7 @@ class PipelineParams(ParamGroup):
         self.densify_until = 11_000
         self.densify_factor = 1.15
         self.probe_from = 5_000
+        self.probe_every = 1_000
         self.probe_sample_size = 0.05
         self.white_background = True
         self.quantile_weight = 1e-4

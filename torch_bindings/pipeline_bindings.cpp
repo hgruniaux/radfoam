@@ -498,7 +498,9 @@ py::object trace_backward(Pipeline &self,
 
 py::object trace_probe(Pipeline &self,
                          torch::Tensor points_in,
-                         torch::Tensor attributes_in,
+                         torch::Tensor att_dc_in_out,
+                         torch::Tensor att_sh_in_out,
+                         torch::Tensor density_in_out,
                          torch::Tensor point_adjacency_in,
                          torch::Tensor point_adjacency_offsets_in,
                          torch::Tensor rays_in,
@@ -506,18 +508,24 @@ py::object trace_probe(Pipeline &self,
                          py::object weight_threshold,
                          py::object max_intersections) {
     torch::Tensor points = points_in.contiguous();
-    torch::Tensor attributes = attributes_in.contiguous();
+    torch::Tensor att_dc = att_dc_in_out.contiguous();
+    torch::Tensor att_sh = att_sh_in_out.contiguous();
+    torch::Tensor density = density_in_out.contiguous();
     torch::Tensor point_adjacency = point_adjacency_in.contiguous();
     torch::Tensor point_adjacency_offsets =
         point_adjacency_offsets_in.contiguous();
     torch::Tensor rays = rays_in.contiguous();
     torch::Tensor start_point = start_point_in.contiguous();
 
+#if 0
+    // This is a debug check that should be already verified by the forward pass.
+    // We don't have access to attributes_in (which is a concat of att_dc, att_sh, f(density) with f some function based on softplus),
     validate_scene_data(self,
                         points_in,
                         attributes_in,
                         point_adjacency_in,
                         point_adjacency_offsets_in);
+#endif
 
     uint32_t num_points = points.size(0);
     uint32_t point_adjacency_size = point_adjacency.size(0);
@@ -559,6 +567,8 @@ py::object trace_probe(Pipeline &self,
     }
     output_shape.push_back(settings.max_intersections);
 
+    // These are temporary tensors needed for the probe trace. It is not intended to retrieve
+    // the results stored in them after the probe trace.
     torch::Tensor output_intersected_cells =
         torch::empty(output_shape,
                      torch::dtype(scalar_to_type_meta(ScalarType::UInt32))
@@ -574,7 +584,9 @@ py::object trace_probe(Pipeline &self,
         settings,
         num_points,
         reinterpret_cast<const radfoam::Vec3f *>(points.data_ptr()),
-        attributes.data_ptr(),
+        att_dc.data_ptr(),
+        att_sh.data_ptr(),
+        density.data_ptr(),
         point_adjacency_size,
         reinterpret_cast<const uint32_t *>(point_adjacency.data_ptr()),
         reinterpret_cast<const uint32_t *>(point_adjacency_offsets.data_ptr()),
@@ -750,7 +762,9 @@ void init_pipeline_bindings(py::module &module) {
         .def("trace_probe",
              trace_probe,
              py::arg("points"),
-             py::arg("attributes"),
+             py::arg("att_dc"),
+             py::arg("att_sh"),
+             py::arg("density"),
              py::arg("point_adjacency"),
              py::arg("point_adjacency_offsets"),
              py::arg("rays"),

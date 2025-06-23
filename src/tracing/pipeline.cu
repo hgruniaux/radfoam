@@ -9,35 +9,61 @@
 #include "sh_utils.cuh"
 #include "tracing_utils.cuh"
 
+#define ALPHA_METHOD_DEFAULT 0
+#define ALPHA_METHOD_SQUARED_DENSITY 1
+#define ALPHA_METHOD_POWER_DENSITY 2
+
+#if ENABLE_SQUARED_DENSITY
+#define ALPHA_METHOD ALPHA_METHOD_SQUARED_DENSITY
+#elif ENABLE_POWER_DENSITY
+#define ALPHA_METHOD ALPHA_METHOD_POWER_DENSITY
+#else
+#define ALPHA_METHOD ALPHA_METHOD_DEFAULT
+#endif
+
 namespace radfoam {
-
-#if ENABLE_ALPHA_CRUSHING
-constexpr float ALPHA_SIGMOID_CENTER = 0.5f;
-constexpr float ALPHA_SIGMOID_SLOPE = 100.0f;
-
-__device__ inline float alpha_sigmoid(float x) {
-    return 1.0f / (1.0f + expf(-ALPHA_SIGMOID_SLOPE * (x - ALPHA_SIGMOID_CENTER)));
-}
-
-__device__ inline float alpha_sigmoid_deriv(float alpha_sigmoid_x) {
-    return ALPHA_SIGMOID_SLOPE * alpha_sigmoid_x * (1.0f - alpha_sigmoid_x);
-}
-#endif // ENABLE_ALPHA_CRUSHING
+// Constants used by the ALPHA_METHOD_POWER_DENSITY
+constexpr float ALPHA_POWER = 10.0f;
+constexpr float ALPHA_X_OFFSET = 0.5f;
 
 __device__ inline float compute_alpha(float s_primal, float delta_t) {
-#if ENABLE_SQUARED_DENSITY
-    const float base_alpha = 1 - expf(-s_primal * s_primal * delta_t);
-#else
-    const float base_alpha = 1 - expf(-s_primal * delta_t);
+#if ALPHA_METHOD == ALPHA_METHOD_SQUARED_DENSITY
+    const float density = s_primal * s_primal;
+#elif ALPHA_METHOD == ALPHA_METHOD_POWER_DENSITY
+    const float density = powf(s_primal + ALPHA_X_OFFSET, ALPHA_POWER);
+#else // ALPHA_METHOD_DEFAULT
+    const float density = s_primal;
 #endif
 
-#if ENABLE_ALPHA_CRUSHING
-    const float alpha = alpha_sigmoid(base_alpha);
-#else
-    const float alpha = base_alpha;
-#endif
+    return 1 - expf(-density * delta_t);
+}
 
-    return alpha;
+__device__ inline float compute_alpha_grad(float s_primal, float delta_t) {
+    return 1.0f;
+}
+
+__device__ inline float compute_dalpha_ds_primal(float s_primal, float delta_t, float alpha, float alpha_grad) {
+#if ALPHA_METHOD == ALPHA_METHOD_SQUARED_DENSITY
+    return 2.0f * alpha_grad * s_primal * delta_t * (1 - alpha);
+#elif ALPHA_METHOD == ALPHA_METHOD_POWER_DENSITY
+    return ALPHA_POWER * alpha_grad * powf(s_primal + ALPHA_X_OFFSET, ALPHA_POWER - 1) * delta_t * (1 - alpha);
+#else // ALPHA_METHOD_DEFAULT
+    return alpha_grad * delta_t * (1 - alpha);
+#endif
+}
+
+__device__ inline float compute_dalpha_ddelta_t(float s_primal, float delta_t, float alpha, float alpha_grad) {
+    if (delta_t > 0.0f) {
+#if ALPHA_METHOD == ALPHA_METHOD_SQUARED_DENSITY
+        return alpha_grad * s_primal * s_primal * (1 - alpha);
+#elif ALPHA_METHOD == ALPHA_METHOD_POWER_DENSITY
+        return alpha_grad * powf(s_primal + ALPHA_X_OFFSET, ALPHA_POWER - 1) * s_primal * (1 - alpha);
+#else // ALPHA_METHOD_DEFAULT
+        return alpha_grad * s_primal * (1 - alpha);
+#endif
+    } else {
+        return 0.0f;
+    }
 }
 
 template <typename attr_scalar, int sh_degree, int block_size>
@@ -158,7 +184,6 @@ __global__ void forward(TraceSettings settings,
         num_intersections[thread_idx] = n;
 }
 
-#pragma region Backward Pass
 template <typename attr_scalar, int sh_degree, int block_size>
 __global__ void backward(TraceSettings settings,
                          const Vec3f *__restrict__ points,
@@ -208,7 +233,7 @@ __global__ void backward(TraceSettings settings,
     };
 
     Vec4f rgba_grad, rgba;
-#pragma unroll
+    #pragma unroll
     for (uint32_t i = 0; i < 4; ++i) {
         rgba_grad[i] = (float)ray_rgba_grad[thread_idx * 4 + i];
         rgba[i] = (float)ray_rgba[thread_idx * 4 + i];
@@ -256,33 +281,12 @@ __global__ void backward(TraceSettings settings,
 
         load_attributes(point_idx, rgb_primal, s_primal);
 
-        float delta_t = fmaxf(t_1 - t_0, 0.0f);
-#if ENABLE_SQUARED_DENSITY
-        float base_alpha = 1 - expf(-s_primal * s_primal * delta_t);
-#else
-        float base_alpha = 1 - expf(-s_primal * delta_t);
-#endif
-    #if ENABLE_ALPHA_CRUSHING
-        float alpha = alpha_sigmoid(base_alpha);
-        float alpha_grad = alpha_sigmoid_deriv(alpha);
-    #else
-        float alpha = base_alpha;
-        float alpha_grad = 1.0f;
-    #endif
-        float weight = transmittance * alpha;
-#if ENABLE_SQUARED_DENSITY
-        float dalpha_ds_primal = 2.0f * alpha_grad * s_primal * delta_t * (1 - alpha);
-        float dalpha_ddelta_t = 0.0f;
-        if (delta_t > 0.0f) {
-            dalpha_ddelta_t = alpha_grad * s_primal * s_primal * (1 - alpha);
-        }
-#else
-        float dalpha_ds_primal = alpha_grad * delta_t * (1 - alpha);
-        float dalpha_ddelta_t = 0.0f;
-        if (delta_t > 0.0f) {
-            dalpha_ddelta_t = alpha_grad * s_primal * (1 - alpha);
-        }
-#endif
+        const float delta_t = fmaxf(t_1 - t_0, 0.0f);
+        const float alpha = compute_alpha(s_primal, delta_t);
+        const float alpha_grad = compute_alpha_grad(s_primal, delta_t);
+        const float dalpha_ds_primal = compute_dalpha_ds_primal(s_primal, delta_t, alpha, alpha_grad);
+        const float dalpha_ddelta_t = compute_dalpha_ddelta_t(s_primal, delta_t, alpha, alpha_grad);
+        const float weight = transmittance * alpha;
 
 
         accumulated_rgb += weight * rgb_primal;
@@ -391,12 +395,13 @@ __global__ void backward(TraceSettings settings,
                          settings.max_intersections,
                          functor);
 }
-#pragma endregion
 
 template <typename attr_scalar, int sh_degree, int block_size>
 __global__ void probe(TraceSettings settings,
                         const Vec3f *__restrict__ points,
-                        attr_scalar *__restrict__ attributes,
+                        attr_scalar *__restrict__ att_dc,
+                        attr_scalar *__restrict__ att_sh,
+                        attr_scalar *__restrict__ density,
                         const uint32_t *__restrict__ point_adjacency,
                         const uint32_t *__restrict__ point_adjacency_offsets,
                         const Vec4h *__restrict__ adjacent_diff,
@@ -419,13 +424,16 @@ __global__ void probe(TraceSettings settings,
     auto sh_coeffs = sh_coefficients<sh_degree>(ray.direction);
 
     auto load_attributes = [&](uint32_t v_idx, Vec3f &rgb, float &s) {
-        const attr_scalar *attr_ptr = attributes + v_idx * attr_memory_size;
-        s = (float)attr_ptr[attr_memory_size - 1];
+        s = (float)density[v_idx];
+        #if 1
+        rgb = Vec3f::Zero();
+        #else
         if (s > 1e-6f) {
             rgb = load_sh_as_rgb<attr_scalar, sh_degree>(sh_coeffs, attr_ptr);
         } else {
             rgb = Vec3f::Zero();
         }
+        #endif
     };
 
     float transmittance = 1.0f;
@@ -436,14 +444,11 @@ __global__ void probe(TraceSettings settings,
                        float t_1,
                        const Vec3f &current_point,
                        const Vec3f &next_point) {
-        Vec3f rgb_primal;
-        float s_primal;
+        const float s_primal = (float)density[point_idx];
 
-        load_attributes(point_idx, rgb_primal, s_primal);
-
-        float delta_t = fmaxf(t_1 - t_0, 0.0f);
-        float alpha = compute_alpha(s_primal, delta_t);
-        float next_transmittance = transmittance * (1 - alpha);
+        const float delta_t = fmaxf(t_1 - t_0, 0.0f);
+        const float alpha = compute_alpha(s_primal, delta_t);
+        const float next_transmittance = transmittance * (1 - alpha);
 
         intersected_cells[settings.max_intersections * thread_idx + iter] = point_idx;
         intersected_contributions[settings.max_intersections * thread_idx + iter] = transmittance - next_transmittance;
@@ -464,45 +469,72 @@ __global__ void probe(TraceSettings settings,
                                       settings.max_intersections,
                                       functor);
 
+#if 1
     // We want to find the smallest interval [a,b] such that the sum of
     // contributions in that interval is greater than some given tau. That is,
     // we want to find the smallest interval of cells that contributes to 
     // the final RGB color at least tau percents.
     uint32_t a = 0;
     uint32_t b = 0;
-    uint32_t min_a = 0;
-    uint32_t min_b = iter - 1;
+    uint32_t nose = 0;
+    uint32_t tail = iter - 1;
     attr_scalar contribution_sum = 0.0f;
-    attr_scalar tau = 0.9f;
+    attr_scalar min_contribution_sum = 0.0f;
+    attr_scalar tau = 0.3f;
     for (b = 0; b < iter; ++b) {
         contribution_sum += intersected_contributions[settings.max_intersections * thread_idx + b];
 
         while (a <= b && contribution_sum >= tau) {
-            if ((min_b - min_a) > (b - a)) {
-                min_a = a;
-                min_b = b;
+            if ((tail - nose) > (b - a)) {
+                nose = a;
+                tail = b;
+                min_contribution_sum = contribution_sum;
             }
 
             contribution_sum -= intersected_contributions[settings.max_intersections * thread_idx + a];
             a += 1;
         }
     }
+#else
+    attr_scalar max_contribution = 0.0f;
+    uint32_t max_contribution_idx = 0;
+    for (uint32_t i = 0; i < iter; ++i) {
+        if (intersected_contributions[settings.max_intersections * thread_idx + i] > max_contribution) {
+            max_contribution = intersected_contributions[settings.max_intersections * thread_idx + i];
+            max_contribution_idx = i;
+        }
+    }
 
-    intersected_cells[settings.max_intersections * (thread_idx + 1) - 2] = min_a;
-    intersected_cells[settings.max_intersections * (thread_idx + 1) - 1] = min_b;
+    attr_scalar tau = attr_scalar(0.95f) * max_contribution;
+    uint32_t nose = max_contribution_idx, tail = max_contribution_idx;
+    while (nose > 0 && intersected_contributions[settings.max_intersections * thread_idx + nose] >= tau)
+        nose -= 1;
+    while (tail < iter - 1 && intersected_contributions[settings.max_intersections * thread_idx + tail] >= tau)
+        tail += 1;
+
+    attr_scalar min_contribution_sum = 0.0f;
+    for (uint32_t i = nose; i <= tail; ++i)
+        min_contribution_sum += intersected_contributions[settings.max_intersections * thread_idx + i];
+#endif
+
+    intersected_cells[settings.max_intersections * (thread_idx + 1) - 2] = nose;
+    intersected_cells[settings.max_intersections * (thread_idx + 1) - 1] = tail;
 
     // Now that we have found the more contributing cells for this ray, we decrease the density
-    // of the cells before the interval (that is the cells [0, min_a - 1]), and increase the density
-    // of the cells in the interval [min_a, min_b].
-    for (uint32_t i = 0; i < min_a; ++i) {
+    // of the cells before the interval (that is the cells [0, nose - 1]), and increase the density
+    // of the cells in the interval [nose, tail].
+    for (uint32_t i = 0; i < nose; ++i) {
         uint32_t point_idx = intersected_cells[settings.max_intersections * thread_idx + i];
-        attr_scalar *attr_ptr = attributes + point_idx * attr_memory_size;
-        attr_ptr[attr_memory_size - 1] *= 0.5f; // Decrease density by half
+        density[point_idx] *= 0.1f;
     }
-    for (uint32_t i = min_a; i <= min_b; ++i) {
+
+    attr_scalar range_length = attr_scalar(tail - nose + 1);
+
+    for (uint32_t i = nose; i <= tail; ++i) {
         uint32_t point_idx = intersected_cells[settings.max_intersections * thread_idx + i];
-        attr_scalar *attr_ptr = attributes + point_idx * attr_memory_size;
-        attr_ptr[attr_memory_size - 1] *= 2.0f; // Increase density by two times
+        attr_scalar contrib_coef = intersected_contributions[settings.max_intersections * thread_idx + i] / min_contribution_sum;
+        attr_scalar position_coef = attr_scalar(i - nose) / range_length;
+        density[point_idx] *= attr_scalar(2.0f);
     }
 }
 
@@ -867,7 +899,9 @@ class CUDATracingPipeline : public Pipeline {
     void trace_probe(const TraceSettings &settings,
                        uint32_t num_points,
                        const Vec3f *points,
-                       void *attributes,
+                       void *att_dc,
+                       void *att_sh,
+                       void *density,
                        uint32_t point_adjacency_size,
                        const uint32_t *point_adjacency,
                        const uint32_t *point_adjacency_offsets,
@@ -893,7 +927,9 @@ class CUDATracingPipeline : public Pipeline {
             nullptr,
             settings,
             points,
-            reinterpret_cast<attr_scalar *>(attributes),
+            reinterpret_cast<attr_scalar *>(att_dc),
+            reinterpret_cast<attr_scalar *>(att_sh),
+            reinterpret_cast<attr_scalar *>(density),
             point_adjacency,
             point_adjacency_offsets,
             adjacent_diff.begin(),
@@ -992,7 +1028,6 @@ std::shared_ptr<Pipeline> create_pipeline(int sh_degree, ScalarType attr_type) {
             throw std::runtime_error("Unsupported SH degree");
         }
     } else if (attr_type == ScalarType::Float16) {
-#if ENABLE_HALF_PRECISION // Disable half support because the server cluster's CUDA version do not seem to support it
         if (sh_degree == 0) {
             return std::make_shared<CUDATracingPipeline<__half, 0>>();
         } else if (sh_degree == 1) {
@@ -1004,9 +1039,6 @@ std::shared_ptr<Pipeline> create_pipeline(int sh_degree, ScalarType attr_type) {
         } else {
             throw std::runtime_error("Unsupported SH degree");
         }
-#else
-        throw std::runtime_error("Compiled without half precision support, add -DENABLE_HALF_PRECISION=1 to enable");
-#endif
     } else {
         throw std::runtime_error("Unsupported attribute type");
     }

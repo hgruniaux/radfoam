@@ -1,7 +1,8 @@
 cmake_minimum_required(VERSION 3.26)
-project(RadFoam VERSION 1.0.0)
 
-set(CMAKE_CUDA_ARCHITECTURES native)
+set(CMAKE_CUDA_ARCHITECTURES 89 CACHE STRING "CUDA architectures" FORCE)
+
+project(RadFoam VERSION 1.0.0)
 
 cmake_policy(SET CMP0060 NEW)
 
@@ -13,25 +14,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
-set(ENABLE_HALF_PRECISION ON CACHE BOOL "Enable half precision")
-if(ENABLE_HALF_PRECISION)
-  message(STATUS "Half precision enabled")
-  add_compile_definitions(ENABLE_HALF_PRECISION=1)
-else()
-  message(STATUS "Half precision disabled")
-  add_compile_definitions(ENABLE_HALF_PRECISION=0)
-endif()
-
-set(ENABLE_ALPHA_CRUSHING ON CACHE BOOL "Enable alpha crushing")
-if(ENABLE_ALPHA_CRUSHING)
-  message(STATUS "Alpha crushing enabled")
-  add_compile_definitions(ENABLE_ALPHA_CRUSHING=1)
-else()
-  message(STATUS "Alpha crushing disabled")
-  add_compile_definitions(ENABLE_ALPHA_CRUSHING=0)
-endif()
-
-set(ENABLE_SQUARED_DENSITY ON CACHE BOOL "Enable squared density")
+set(ENABLE_SQUARED_DENSITY ON CACHE BOOL "Enable squared density (can not be used with power density)")
 if(ENABLE_SQUARED_DENSITY)
   message(STATUS "Squared density enabled")
   add_compile_definitions(ENABLE_SQUARED_DENSITY=1)
@@ -39,6 +22,21 @@ else()
   message(STATUS "Squared density disabled")
   add_compile_definitions(ENABLE_SQUARED_DENSITY=0)
 endif()
+
+set(ENABLE_POWER_DENSITY ON CACHE BOOL "Enable power density (can not be used with squared density)")
+if(ENABLE_POWER_DENSITY)
+  message(STATUS "Power density enabled")
+  add_compile_definitions(ENABLE_POWER_DENSITY=1)
+else()
+  message(STATUS "Power density disabled")
+  add_compile_definitions(ENABLE_POWER_DENSITY=0)
+endif()
+
+if (ENABLE_SQUARED_DENSITY AND ENABLE_POWER_DENSITY)
+  message(FATAL_ERROR "Cannot enable both squared density and power density")
+endif()
+
+add_compile_definitions(-DPYBIND11_DETAILED_ERROR_MESSAGES=1)
 
 set(GPU_DEBUG
     ON

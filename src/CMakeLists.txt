@@ -27,4 +27,4 @@ target_include_directories(radfoam PUBLIC ${RADFOAM_INCLUDES})
 target_link_libraries(
   radfoam PUBLIC CUDA::cudart CUDA::cuda_driver ${GLFW_LIBRARY} gl3w imgui TBB::tbb)
 target_compile_options(radfoam PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-lineinfo -O3
-                                       -Wall -Wno-unknown-pragmas> -O3)
+                                       -Wall -Wno-unknown-pragmas -gencode;arch=compute_86,code=sm_86> -O3)

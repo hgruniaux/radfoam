@@ -84,7 +84,7 @@ __global__ void forward(TraceSettings settings,
                         uint32_t *__restrict__ num_intersections,
                         attr_scalar *__restrict__ point_contribution) {
 
-    uint32_t thread_idx = blockIdx.x * blockDim.x + threadIdx.x;
+    const uint32_t thread_idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (thread_idx >= num_rays)
         return;
 
@@ -128,9 +128,9 @@ __global__ void forward(TraceSettings settings,
 
         load_attributes(point_idx, rgb_primal, s_primal);
 
-        float delta_t = fmaxf(t_1 - t_0, 0.0f);
-        float alpha = compute_alpha(s_primal, delta_t);
-        float weight = transmittance * alpha;
+        const float delta_t = fmaxf(t_1 - t_0, 0.0f);
+        const float alpha = compute_alpha(s_primal, delta_t);
+        const float weight = transmittance * alpha;
 
         if (point_contribution) {
             atomicAdd(point_contribution + point_idx, (attr_scalar)weight);
@@ -206,7 +206,7 @@ __global__ void backward(TraceSettings settings,
                          attr_scalar *__restrict__ attribute_grad,
                          attr_scalar *__restrict__ point_error) {
 
-    uint32_t thread_idx = blockIdx.x * blockDim.x + threadIdx.x;
+    const uint32_t thread_idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (thread_idx >= num_rays)
         return;
 
@@ -411,7 +411,7 @@ __global__ void probe(TraceSettings settings,
                         uint32_t *__restrict__ intersected_cells,
                         attr_scalar *__restrict__ intersected_contributions) {
 
-    uint32_t thread_idx = blockIdx.x * blockDim.x + threadIdx.x;
+    const uint32_t thread_idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (thread_idx >= num_rays)
         return;
 
@@ -552,9 +552,9 @@ visualization(TraceSettings settings,
               cudaSurfaceObject_t output_rgba,
               uint32_t start_point_index) {
 
-    uint32_t thread_idx = blockIdx.x * blockDim.x + threadIdx.x;
-    uint32_t pix_i = thread_idx % camera.width;
-    uint32_t pix_j = thread_idx / camera.width;
+    const uint32_t thread_idx = blockIdx.x * blockDim.x + threadIdx.x;
+    const uint32_t pix_i = thread_idx % camera.width;
+    const uint32_t pix_j = thread_idx / camera.width;
 
     if (pix_i >= camera.width || pix_j >= camera.height)
         return;
@@ -676,9 +676,9 @@ __global__ void benchmark(TraceSettings settings,
                           const uint32_t *__restrict__ start_point_index,
                           uint32_t *__restrict__ output_rgba) {
 
-    uint32_t thread_idx = blockIdx.x * blockDim.x + threadIdx.x;
-    uint32_t pix_i = thread_idx % camera.width;
-    uint32_t pix_j = thread_idx / camera.width;
+    const uint32_t thread_idx = blockIdx.x * blockDim.x + threadIdx.x;
+    const uint32_t pix_i = thread_idx % camera.width;
+    const uint32_t pix_j = thread_idx / camera.width;
 
     if (pix_i >= camera.width || pix_j >= camera.height)
         return;

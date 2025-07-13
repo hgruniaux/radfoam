@@ -2,6 +2,7 @@
 
 #include <functional>
 #include <memory>
+#include <vector>
 
 #include "../tracing/pipeline.h"
 
@@ -14,6 +15,9 @@ struct ViewerOptions {
     Vec3f camera_pos;
     Vec3f camera_forward;
     Vec3f camera_up;
+    std::vector<Vec3f> all_positions;
+    std::vector<Vec3f> all_forwards;
+    std::vector<Vec3f> all_ups;
 };
 
 inline ViewerOptions default_viewer_options() {

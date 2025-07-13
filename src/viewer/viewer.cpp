@@ -736,223 +736,253 @@ struct ViewerPrivate : public Viewer {
             ImGui::NewFrame();
 
             ImGui::SetNextWindowSize(ImVec2(400, 440), ImGuiCond_FirstUseEver);
-            ImGui::Begin("Controls");
+            if (ImGui::Begin("Controls")) {
 
-            if (training.load()) {
-                ImGui::SeparatorText("Training");
+                if (training.load()) {
+                    ImGui::SeparatorText("Training");
 
-                ImGui::Text("Iteration controls: ");
-                ImGui::SameLine();
-                if (ImGui::Button(paused ? ">" : "||")) {
-                    paused = !paused;
-                }
-                if (paused) {
+                    ImGui::Text("Iteration controls: ");
                     ImGui::SameLine();
-                    bool disabled = should_step;
-                    if (disabled) {
-                        ImGui::BeginDisabled();
+                    if (ImGui::Button(paused ? ">" : "||")) {
+                        paused = !paused;
                     }
-                    if (ImGui::Button(">|")) {
-                        should_step = true;
+                    if (paused) {
+                        ImGui::SameLine();
+                        bool disabled = should_step;
+                        if (disabled) {
+                            ImGui::BeginDisabled();
+                        }
+                        if (ImGui::Button(">|")) {
+                            should_step = true;
+                        }
+                        if (disabled) {
+                            ImGui::EndDisabled();
+                        }
                     }
-                    if (disabled) {
-                        ImGui::EndDisabled();
+
+                    if (options.total_iterations > 0) {
+                        ImGui::ProgressBar(float(iteration.load()) /
+                                               options.total_iterations,
+                                           ImVec2(0.0f, 0.0f));
+                        ImGui::SameLine();
+                        ImGui::Text("%d / %d",
+                                    iteration.load(),
+                                    options.total_iterations);
+                    } else {
+                        ImGui::Text("Iteration: %d", iteration.load());
                     }
                 }
 
-                if (options.total_iterations > 0) {
-                    ImGui::ProgressBar(float(iteration.load()) /
-                                           options.total_iterations,
-                                       ImVec2(0.0f, 0.0f));
-                    ImGui::SameLine();
-                    ImGui::Text(
-                        "%d / %d", iteration.load(), options.total_iterations);
-                } else {
-                    ImGui::Text("Iteration: %d", iteration.load());
+                ImGui::SeparatorText("Viewer settings");
+
+                ImGui::Text("Resolution: %dx%d", camera.width, camera.height);
+
+                float fov_degrees = camera.fov * 180.0f / M_PI;
+                ImGui::SliderFloat("Field of view",
+                                   &fov_degrees,
+                                   25.0f,
+                                   160.0f,
+                                   "%.0f°",
+                                   ImGuiSliderFlags_Logarithmic);
+                camera.fov = fov_degrees * M_PI / 180.0f;
+
+                const char *camera_models[] = {"Pinhole", "Fisheye"};
+
+                ImGui::Combo("Camera model",
+                             reinterpret_cast<int *>(&camera.model),
+                             camera_models,
+                             IM_ARRAYSIZE(camera_models));
+
+                ImGui::Text("Frame rate: %d frames/s", int(frame_rate + 0.5f));
+                ImGui::Checkbox("Limit viewer frame rate while training",
+                                &options.limit_framerate);
+                if (options.limit_framerate) {
+                    ImGui::SliderInt(
+                        "Max frame rate", &options.max_framerate, 1, 240);
                 }
-            }
 
-            ImGui::SeparatorText("Viewer settings");
-
-            ImGui::Text("Resolution: %dx%d", camera.width, camera.height);
-
-            float fov_degrees = camera.fov * 180.0f / M_PI;
-            ImGui::SliderFloat("Field of view",
-                               &fov_degrees,
-                               25.0f,
-                               160.0f,
-                               "%.0f°",
-                               ImGuiSliderFlags_Logarithmic);
-            camera.fov = fov_degrees * M_PI / 180.0f;
-
-            const char *camera_models[] = {"Pinhole", "Fisheye"};
-
-            ImGui::Combo("Camera model",
-                         reinterpret_cast<int *>(&camera.model),
-                         camera_models,
-                         IM_ARRAYSIZE(camera_models));
-
-            ImGui::Text("Frame rate: %d frames/s", int(frame_rate + 0.5f));
-            ImGui::Checkbox("Limit viewer frame rate while training",
-                            &options.limit_framerate);
-            if (options.limit_framerate) {
-                ImGui::SliderInt(
-                    "Max frame rate", &options.max_framerate, 1, 240);
-            }
-
-            ImGui::SeparatorText("Trace settings");
-            ImGui::SliderFloat("Weight threshold",
-                               &settings.weight_threshold,
-                               1e-3,
-                               1e0,
-                               "%.4f",
-                               ImGuiSliderFlags_Logarithmic |
-                                   ImGuiSliderFlags_NoRoundToFormat);
-            ImGui::SliderInt(
-                "Max intersections",
-                reinterpret_cast<int *>(&settings.max_intersections),
-                1,
-                1024,
-                "%d",
-                ImGuiSliderFlags_Logarithmic);
-
-            ImGui::SeparatorText("Visualization settings");
-
-            const char *modes[] = {"RGB", "Depth", "Alpha", "Intersections"};
-            ImGui::Combo("Mode",
-                         reinterpret_cast<int *>(&vis_settings.mode),
-                         modes,
-                         IM_ARRAYSIZE(modes));
-
-            if (vis_settings.mode == VisualizationMode::Depth ||
-                vis_settings.mode == VisualizationMode::Intersections) {
-                const char *color_maps[] = {
-                    "Gray", "Viridis", "Inferno", "Turbo"};
-                ImGui::Combo("Color map",
-                             reinterpret_cast<int *>(&vis_settings.color_map),
-                             color_maps,
-                             IM_ARRAYSIZE(color_maps));
-            }
-
-            if (vis_settings.mode == VisualizationMode::RGB) {
-                ImGui::Checkbox("Checkerboard background",
-                                &vis_settings.checker_bg);
-                if (!vis_settings.checker_bg) {
-                    ImGui::ColorEdit3(
-                        "Background color",
-                        reinterpret_cast<float *>(&vis_settings.bg_color));
-                }
-            }
-
-            if (vis_settings.mode == VisualizationMode::Depth) {
-                ImGui::SliderFloat("Max depth",
-                                   &vis_settings.max_depth,
-                                   1e-5,
-                                   1e3,
+                ImGui::SeparatorText("Trace settings");
+                ImGui::SliderFloat("Weight threshold",
+                                   &settings.weight_threshold,
+                                   1e-3,
+                                   1e0,
                                    "%.4f",
                                    ImGuiSliderFlags_Logarithmic |
                                        ImGuiSliderFlags_NoRoundToFormat);
-                float percentile = vis_settings.depth_quantile * 100.0f;
-                ImGui::SliderFloat(
-                    "Depth percentile", &percentile, 0.0f, 100.0f, "%.0f\%");
-                vis_settings.depth_quantile = percentile / 100.0f;
-            }
+                ImGui::SliderInt(
+                    "Max intersections",
+                    reinterpret_cast<int *>(&settings.max_intersections),
+                    1,
+                    1024,
+                    "%d",
+                    ImGuiSliderFlags_Logarithmic);
 
-            gl_check(glViewport(0, 0, camera.width, camera.height));
-            gl_check(glClear(GL_COLOR_BUFFER_BIT));
+                ImGui::SeparatorText("Visualization settings");
 
-            if (num_point_adjacency > 0) {
-                uint32_t start_index = nn_cpu(ScalarType::Float32,
-                                              points_cpu.data(),
-                                              aabb_tree_cpu.data(),
-                                              *camera.position,
-                                              num_points);
-                CUarray output_array = nullptr;
-                CUsurfObject output_surface = 0;
-                if (is_cuda_gl_interop_supported) {
-                    cuda_check(cuGraphicsMapResources(1, &resource, 0));
-                    cuda_check(cuGraphicsSubResourceGetMappedArray(
-                        &output_array, resource, 0, 0));
-                } else {
-                    CUDA_ARRAY_DESCRIPTOR arrDesc = {};
-                    arrDesc.Format = CU_AD_FORMAT_UNSIGNED_INT8;
-                    arrDesc.NumChannels = 4;
-                    arrDesc.Width = camera.width;
-                    arrDesc.Height = camera.height;
-                    cuda_check(cuArrayCreate(&output_array, &arrDesc));
+                const char *modes[] = {
+                    "RGB", "Depth", "Alpha", "Intersections"};
+                ImGui::Combo("Mode",
+                             reinterpret_cast<int *>(&vis_settings.mode),
+                             modes,
+                             IM_ARRAYSIZE(modes));
+
+                if (vis_settings.mode == VisualizationMode::Depth ||
+                    vis_settings.mode == VisualizationMode::Intersections) {
+                    const char *color_maps[] = {
+                        "Gray", "Viridis", "Inferno", "Turbo"};
+                    ImGui::Combo(
+                        "Color map",
+                        reinterpret_cast<int *>(&vis_settings.color_map),
+                        color_maps,
+                        IM_ARRAYSIZE(color_maps));
                 }
 
-                CUDA_RESOURCE_DESC res_desc = {};
-                res_desc.resType = CU_RESOURCE_TYPE_ARRAY;
-                res_desc.res.array.hArray = output_array;
-                cuda_check(cuSurfObjectCreate(&output_surface, &res_desc));
+                if (vis_settings.mode == VisualizationMode::RGB) {
+                    ImGui::Checkbox("Checkerboard background",
+                                    &vis_settings.checker_bg);
+                    if (!vis_settings.checker_bg) {
+                        ImGui::ColorEdit3(
+                            "Background color",
+                            reinterpret_cast<float *>(&vis_settings.bg_color));
+                    }
+                }
 
-                pipeline->trace_visualization(
-                    settings,
-                    vis_settings,
-                    camera,
-                    cmap_table,
-                    num_points,
-                    num_point_adjacency,
-                    points_buffer.begin(),
-                    attrs_buffer.begin(),
-                    point_adjacency_buffer.begin(),
-                    point_adjacency_offsets_buffer.begin(),
-                    adjacent_diff_buffer.begin(),
-                    start_index,
-                    output_surface,
-                    &cuda_stream);
+                if (vis_settings.mode == VisualizationMode::Depth) {
+                    ImGui::SliderFloat("Max depth",
+                                       &vis_settings.max_depth,
+                                       1e-5,
+                                       1e3,
+                                       "%.4f",
+                                       ImGuiSliderFlags_Logarithmic |
+                                           ImGuiSliderFlags_NoRoundToFormat);
+                    float percentile = vis_settings.depth_quantile * 100.0f;
+                    ImGui::SliderFloat("Depth percentile",
+                                       &percentile,
+                                       0.0f,
+                                       100.0f,
+                                       "%.0f\%");
+                    vis_settings.depth_quantile = percentile / 100.0f;
+                }
 
-                if (is_cuda_gl_interop_supported) {
-                    cuda_check(cuSurfObjectDestroy(output_surface));
-                    cuda_check(cuGraphicsUnmapResources(1, &resource, 0));
-                } else {
-                    cuda_check(cuStreamSynchronize(cuda_stream));
-                    cuda_check(cuSurfObjectDestroy(output_surface));
+                gl_check(glViewport(0, 0, camera.width, camera.height));
+                gl_check(glClear(GL_COLOR_BUFFER_BIT));
 
-                    size_t buffer_size =
-                        camera.width * camera.height * 4; // RGBA8
-                    if (cpu_fallback_buffer.size() != buffer_size) {
-                        cpu_fallback_buffer.resize(buffer_size);
+                if (num_point_adjacency > 0) {
+                    uint32_t start_index = nn_cpu(ScalarType::Float32,
+                                                  points_cpu.data(),
+                                                  aabb_tree_cpu.data(),
+                                                  *camera.position,
+                                                  num_points);
+                    CUarray output_array = nullptr;
+                    CUsurfObject output_surface = 0;
+                    if (is_cuda_gl_interop_supported) {
+                        cuda_check(cuGraphicsMapResources(1, &resource, 0));
+                        cuda_check(cuGraphicsSubResourceGetMappedArray(
+                            &output_array, resource, 0, 0));
+                    } else {
+                        CUDA_ARRAY_DESCRIPTOR arrDesc = {};
+                        arrDesc.Format = CU_AD_FORMAT_UNSIGNED_INT8;
+                        arrDesc.NumChannels = 4;
+                        arrDesc.Width = camera.width;
+                        arrDesc.Height = camera.height;
+                        cuda_check(cuArrayCreate(&output_array, &arrDesc));
                     }
 
-                    CUDA_MEMCPY2D copyParam = {0};
-                    copyParam.srcXInBytes = 0;
-                    copyParam.srcY = 0;
-                    copyParam.srcMemoryType = CU_MEMORYTYPE_ARRAY;
-                    copyParam.srcArray = output_array;
-                    copyParam.dstXInBytes = 0;
-                    copyParam.dstY = 0;
-                    copyParam.dstMemoryType = CU_MEMORYTYPE_HOST;
-                    copyParam.dstHost = cpu_fallback_buffer.data();
-                    copyParam.WidthInBytes = camera.width * 4;
-                    copyParam.Height = camera.height;
-                    cuda_check(cuMemcpy2D(&copyParam));
-                    cuda_check(cuArrayDestroy(output_array));
-                }
+                    CUDA_RESOURCE_DESC res_desc = {};
+                    res_desc.resType = CU_RESOURCE_TYPE_ARRAY;
+                    res_desc.res.array.hArray = output_array;
+                    cuda_check(cuSurfObjectCreate(&output_surface, &res_desc));
 
-                gl_check(glBindTexture(GL_TEXTURE_2D, texture));
-                gl_check(glDrawArrays(GL_TRIANGLE_STRIP, 0, 4));
-                if (!is_cuda_gl_interop_supported) {
-                    gl_check(glTexImage2D(GL_TEXTURE_2D,
-                                          0,
-                                          GL_RGBA8,
-                                          camera.width,
-                                          camera.height,
-                                          0,
-                                          GL_RGBA,
-                                          GL_UNSIGNED_BYTE,
-                                          cpu_fallback_buffer.data()));
-                }
-                gl_check(glBindTexture(GL_TEXTURE_2D, 0));
+                    pipeline->trace_visualization(
+                        settings,
+                        vis_settings,
+                        camera,
+                        cmap_table,
+                        num_points,
+                        num_point_adjacency,
+                        points_buffer.begin(),
+                        attrs_buffer.begin(),
+                        point_adjacency_buffer.begin(),
+                        point_adjacency_offsets_buffer.begin(),
+                        adjacent_diff_buffer.begin(),
+                        start_index,
+                        output_surface,
+                        &cuda_stream);
 
-                if (is_cuda_gl_interop_supported) {
-                    cuda_check(cuStreamSynchronize(cuda_stream));
-                } else {
-                    cuda_check(cuStreamSynchronize(0));
+                    if (is_cuda_gl_interop_supported) {
+                        cuda_check(cuSurfObjectDestroy(output_surface));
+                        cuda_check(cuGraphicsUnmapResources(1, &resource, 0));
+                    } else {
+                        cuda_check(cuStreamSynchronize(cuda_stream));
+                        cuda_check(cuSurfObjectDestroy(output_surface));
+
+                        size_t buffer_size =
+                            camera.width * camera.height * 4; // RGBA8
+                        if (cpu_fallback_buffer.size() != buffer_size) {
+                            cpu_fallback_buffer.resize(buffer_size);
+                        }
+
+                        CUDA_MEMCPY2D copyParam = {0};
+                        copyParam.srcXInBytes = 0;
+                        copyParam.srcY = 0;
+                        copyParam.srcMemoryType = CU_MEMORYTYPE_ARRAY;
+                        copyParam.srcArray = output_array;
+                        copyParam.dstXInBytes = 0;
+                        copyParam.dstY = 0;
+                        copyParam.dstMemoryType = CU_MEMORYTYPE_HOST;
+                        copyParam.dstHost = cpu_fallback_buffer.data();
+                        copyParam.WidthInBytes = camera.width * 4;
+                        copyParam.Height = camera.height;
+                        cuda_check(cuMemcpy2D(&copyParam));
+                        cuda_check(cuArrayDestroy(output_array));
+                    }
+
+                    gl_check(glBindTexture(GL_TEXTURE_2D, texture));
+                    gl_check(glDrawArrays(GL_TRIANGLE_STRIP, 0, 4));
+                    if (!is_cuda_gl_interop_supported) {
+                        gl_check(glTexImage2D(GL_TEXTURE_2D,
+                                              0,
+                                              GL_RGBA8,
+                                              camera.width,
+                                              camera.height,
+                                              0,
+                                              GL_RGBA,
+                                              GL_UNSIGNED_BYTE,
+                                              cpu_fallback_buffer.data()));
+                    }
+                    gl_check(glBindTexture(GL_TEXTURE_2D, 0));
+
+                    if (is_cuda_gl_interop_supported) {
+                        cuda_check(cuStreamSynchronize(cuda_stream));
+                    } else {
+                        cuda_check(cuStreamSynchronize(0));
+                    }
                 }
             }
+            ImGui::End();
 
+            if (ImGui::Begin("Camera position")) {
+                ImGui::DragFloat3("Position", camera.position.data);
+
+                float fov_degrees = camera.fov * 180.0f / M_PI;
+                ImGui::DragFloat(
+                    "FOV (degrees)", &fov_degrees, 1.0f, 0.0f, 180.0f);
+                camera.fov = fov_degrees * M_PI / 180.0f;
+
+                if (ImGui::BeginCombo("Preset camera position", "Custom")) {
+                    for (size_t i = 0; i < options.all_positions.size(); ++i) {
+                        const auto label = std::string("Camera ") + std::to_string(i + 1);
+                        if (ImGui::Selectable(label.c_str())) {
+                            camera.position = options.all_positions[i];
+                            camera.forward = options.all_forwards[i].normalized();
+                            camera.up = options.all_ups[i].normalized();
+                            camera.right =  options.all_forwards[i].cross(options.all_ups[i]).normalized();
+                        }
+                    }
+
+                    ImGui::EndCombo();
+                }
+            }
             ImGui::End();
 
             ImGui::Render();

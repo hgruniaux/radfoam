@@ -700,7 +700,10 @@ void run_with_viewer(std::shared_ptr<Pipeline> pipeline,
                      std::optional<int> total_iterations,
                      std::optional<torch::Tensor> camera_pos,
                      std::optional<torch::Tensor> camera_forward,
-                     std::optional<torch::Tensor> camera_up) {
+                     std::optional<torch::Tensor> camera_up,
+                     std::optional<torch::Tensor> all_positions,
+                     std::optional<torch::Tensor> all_forwards,
+                     std::optional<torch::Tensor> all_ups) {
     py::gil_scoped_release release;
 
     ViewerOptions options = default_viewer_options();
@@ -722,6 +725,35 @@ void run_with_viewer(std::shared_ptr<Pipeline> pipeline,
         torch::Tensor camera_up_cpu =
             camera_up->contiguous().cpu().to(torch::kFloat);
         options.camera_up = radfoam::Vec3f(camera_up_cpu.data_ptr<float>());
+    }
+    if (all_positions.has_value()) {
+        torch::Tensor all_positions_cpu =
+            all_positions->contiguous().cpu().to(torch::kFloat);
+        const float *all_positions_data =
+            all_positions_cpu.data_ptr<float>();
+        options.all_positions.resize(all_positions_cpu.size(0));
+        std::memcpy(options.all_positions.data(),
+                  all_positions_data,
+                  all_positions_cpu.size(0) * sizeof(float) * 3);
+    }
+    if (all_forwards.has_value()) {
+        torch::Tensor all_forwards_cpu =
+            all_forwards->contiguous().cpu().to(torch::kFloat);
+        const float *all_forwards_data =
+            all_forwards_cpu.data_ptr<float>();
+        options.all_forwards.resize(all_forwards_cpu.size(0));
+        std::memcpy(options.all_forwards.data(),
+                  all_forwards_data,
+                  all_forwards_cpu.size(0) * sizeof(float) * 3);
+    }
+    if (all_ups.has_value()) {
+        torch::Tensor all_ups_cpu =
+            all_ups->contiguous().cpu().to(torch::kFloat);
+        const float *all_ups_data = all_ups_cpu.data_ptr<float>();
+        options.all_ups.resize(all_ups_cpu.size(0));
+        std::memcpy(options.all_ups.data(),
+                  all_ups_data,
+                  all_ups_cpu.size(0) * sizeof(float) * 3);
     }
 
     set_default_stream();
@@ -807,7 +839,10 @@ void init_pipeline_bindings(py::module &module) {
                py::arg("total_iterations") = py::none(),
                py::arg("camera_pos") = py::none(),
                py::arg("camera_forward") = py::none(),
-               py::arg("camera_up") = py::none());
+               py::arg("camera_up") = py::none(),
+               py::arg("all_positions") = py::none(),
+               py::arg("all_forwards") = py::none(),
+               py::arg("all_ups") = py::none());
 }
 
 } // namespace radfoam_bindings

@@ -31,6 +31,9 @@ def viewer(args, pipeline_args, model_args, optimizer_args, dataset_args):
         "camera_pos": test_data_handler.viewer_pos,
         "camera_up": test_data_handler.viewer_up,
         "camera_forward": test_data_handler.viewer_forward,
+        "all_positions": test_data_handler.camera_positions,
+        "all_forwards": test_data_handler.camera_forwards,
+        "all_ups": test_data_handler.camera_ups,
     }
 
     # Setting up model

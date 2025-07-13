@@ -31,18 +31,38 @@ class COLMAPDataset:
 
         if downsample == 1:
             images_dir = os.path.join(datadir, "images")
-            semantic_dir = os.path.join(datadir, "semantic")
+            instances_dir = os.path.join(datadir, "instances")
+            depths_dir = os.path.join(datadir, "depths")
+            normals_dir = os.path.join(datadir, "normals")
         else:
             images_dir = os.path.join(datadir, f"images_{downsample}")
-            semantic_dir = os.path.join(datadir, f"semantic_{downsample}")
+            instances_dir = os.path.join(datadir, f"instances_{downsample}")
+            depths_dir = os.path.join(datadir, f"depths_{downsample}")
+            normals_dir = os.path.join(datadir, f"normals_{downsample}")
 
         if not os.path.exists(images_dir):
             raise ValueError(f"Images directory {images_dir} not found")
         
-        has_semantic_data = True
-        if not os.path.exists(semantic_dir):
-            has_semantic_data = False
-            print("The dataset has no semantic data")
+        has_instances_data = True
+        if not os.path.exists(instances_dir):
+            has_instances_data = False
+            print("The dataset has NO instances data")
+        else:
+            print("The dataset has instances data")
+
+        has_depths_data = True
+        if not os.path.exists(depths_dir):
+            has_depths_data = False
+            print("The dataset has NO depths data")
+        else:
+            print("The dataset has depths data")
+
+        has_normals_data = True
+        if not os.path.exists(normals_dir):
+            has_normals_data = False
+            print("The dataset has NO normals data")
+        else:
+            print("The dataset has normals data")
 
         self.reconstruction = pycolmap.Reconstruction()
         self.reconstruction.read(self.colmap_dir)
@@ -92,10 +112,9 @@ class COLMAPDataset:
         self.poses = []
         self.all_rays = []
         self.all_rgbs = []
-        if has_semantic_data:
-            self.all_semas = []
-        else:
-            self.all_semas = None
+        self.all_instances = [] if has_instances_data else None
+        self.all_depths = [] if has_depths_data else None
+        self.all_normals = [] if has_normals_data else None
 
         for image in tqdm(self.images):
             c2w = torch.tensor(
@@ -116,12 +135,25 @@ class COLMAPDataset:
             rgbs = torch.tensor(np.array(im), dtype=torch.float32) / 255.0
             im.close()
 
-            if has_semantic_data:
-                sema = Image.open(os.path.join(semantic_dir, image.name))
-                sema = sema.convert("RGB")
-                semas = torch.tensor(np.array(sema), dtype=torch.float32) / 255.0
-                sema.close()
-                self.all_semas.append(semas)
+            if has_instances_data:
+                instance = Image.open(os.path.join(instances_dir, image.name))
+                instance = instance.convert("RGB")
+                instances = torch.tensor(np.array(instance), dtype=torch.float32) / 255.0
+                instance.close()
+                self.all_instances.append(instances)
+
+            if has_depths_data:
+                depth = Image.open(os.path.join(depths_dir, image.name))
+                depths = torch.tensor(np.array(depth), dtype=torch.float32) / 65535.0
+                depth.close()
+                self.all_depths.append(depths)
+
+            if has_normals_data:
+                normal = Image.open(os.path.join(normals_dir, image.name))
+                normal = normal.convert("RGB")
+                normals = torch.tensor(np.array(normal), dtype=torch.float32) / 255.0
+                normal.close()
+                self.all_normals.append(normals)
 
             self.all_rays.append(world_rays)
             self.all_rgbs.append(rgbs)
@@ -130,8 +162,12 @@ class COLMAPDataset:
         self.all_rays = torch.stack(self.all_rays)
         self.all_rgbs = torch.stack(self.all_rgbs)
 
-        if has_semantic_data:
-            self.all_semas = torch.stack(self.all_semas)
+        if has_instances_data:
+            self.all_instances = torch.stack(self.all_instances)
+        if has_depths_data:
+            self.all_depths = torch.stack(self.all_depths)
+        if has_normals_data:
+            self.all_normals = torch.stack(self.all_normals)
 
         self.points3D = []
         self.points3D_color = []

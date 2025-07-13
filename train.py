@@ -81,10 +81,14 @@ def train(args, pipeline_args, model_args, optimizer_args, dataset_args):
         "camera_pos": train_data_handler.viewer_pos,
         "camera_up": train_data_handler.viewer_up,
         "camera_forward": train_data_handler.viewer_forward,
+        "all_positions": train_data_handler.camera_positions,
+        "all_forwards": train_data_handler.camera_forwards,
+        "all_ups": train_data_handler.camera_ups,
     }
 
     # Setting up pipeline
     rgb_loss = nn.SmoothL1Loss(reduction="none")
+    depth_loss = nn.L1Loss(reduction="none")
 
     # Setting up model
     model = RadFoamScene(
@@ -152,7 +156,7 @@ def train(args, pipeline_args, model_args, optimizer_args, dataset_args):
         torch.cuda.synchronize()
 
         data_iterator = train_data_handler.get_iter()
-        ray_batch, rgb_batch, alpha_batch = next(data_iterator)
+        ray_batch, rgb_batch, alpha_batch, normal_batch, depth_batch, instance_batch = next(data_iterator)
 
         triangulation_update_period = 1
         iters_since_update = 1
@@ -162,10 +166,15 @@ def train(args, pipeline_args, model_args, optimizer_args, dataset_args):
         loss_over_time = []
         color_loss_over_time = []
         opacity_loss_over_time = []
+        depth_loss_over_time = []
         quant_loss_over_time = []
         w_depth_over_time = []
         num_points_over_time = []
         test_psnr_over_time = []
+        position_grad_over_time = []
+        att_dc_grad_over_time = []
+        att_sh_grad_over_time = []
+        density_grad_over_time = []
 
         with tqdm.trange(pipeline_args.iterations) as train:
             for i in train:
@@ -179,7 +188,7 @@ def train(args, pipeline_args, model_args, optimizer_args, dataset_args):
                         split="train", downsample=downsample
                     )
                     data_iterator = train_data_handler.get_iter()
-                    ray_batch, rgb_batch, alpha_batch = next(data_iterator)
+                    ray_batch, rgb_batch, alpha_batch, normal_batch, depth_batch, instance_batch = next(data_iterator)
 
                 depth_quantiles = (
                     torch.rand(*ray_batch.shape[:-1], 2, device=device)
@@ -209,7 +218,11 @@ def train(args, pipeline_args, model_args, optimizer_args, dataset_args):
                     2 * i / pipeline_args.iterations, 1
                 )
 
-                loss = color_loss.mean() + opacity_loss + w_depth * quant_loss
+                normalized_depth = depth[:, 1] / 100.0
+                # print(f"Depth: std={normalized_depth.std().item():.3f}, mean={normalized_depth.mean().item():.3f}, min={normalized_depth.min().item():.3f}, max={normalized_depth.max().item():.3f}")
+                # print(f"Ground truth depth: std={depth_batch.std().item():.3f}, mean={depth_batch.mean().item():.3f}, min={depth_batch.min().item():.3f}, max={depth_batch.max().item():.3f}")
+                depth_loss_value =  ((depth_batch - normalized_depth) ** 2).mean()
+                loss = color_loss.mean() + opacity_loss + w_depth * quant_loss + 0.001 * depth_loss_value
 
                 model.optimizer.zero_grad(set_to_none=True)
 
@@ -218,7 +231,12 @@ def train(args, pipeline_args, model_args, optimizer_args, dataset_args):
                 event.record()
                 loss.backward()
                 event.synchronize()
-                ray_batch, rgb_batch, alpha_batch = next(data_iterator)
+                ray_batch, rgb_batch, alpha_batch, normal_batch, depth_batch, instance_batch = next(data_iterator)
+
+                position_grad_over_time.append(model.primal_points.grad.norm().item())
+                att_dc_grad_over_time.append(model.att_dc.grad.norm().item())
+                att_sh_grad_over_time.append(model.att_sh.grad.norm().item())
+                density_grad_over_time.append(model.density.grad.norm().item())
 
                 model.optimizer.step()
                 model.update_learning_rate(i)
@@ -236,12 +254,11 @@ def train(args, pipeline_args, model_args, optimizer_args, dataset_args):
 
                 loss_over_time.append(loss.item())
                 opacity_loss_over_time.append(opacity_loss.item())
+                depth_loss_over_time.append(depth_loss_value.item())
                 quant_loss_over_time.append(quant_loss.item())
                 w_depth_over_time.append(w_depth)
                 color_loss_over_time.append(color_loss_mean)
                 num_points_over_time.append(model.primal_points.shape[0])
-                # test_psnr_over_time.append(test_psnr.item())
-                test_psnr_over_time.append(0)
 
                 if i % 100 == 99 and not pipeline_args.debug:
                     writer.add_scalar("train/rgb_loss", color_loss.mean(), i)
@@ -258,8 +275,8 @@ def train(args, pipeline_args, model_args, optimizer_args, dataset_args):
                     )
                     writer.add_scalar("test/psnr", test_psnr, i)
 
-                    
-
+                    test_psnr_over_time.append(test_psnr.item())
+            
                     writer.add_scalar(
                         "lr/points_lr", model.xyz_scheduler_args(i), i
                     )
@@ -269,6 +286,8 @@ def train(args, pipeline_args, model_args, optimizer_args, dataset_args):
                     writer.add_scalar(
                         "lr/attr_lr", model.attr_dc_scheduler_args(i), i
                     )
+                else:
+                    test_psnr_over_time.append(test_psnr_over_time[-1] if test_psnr_over_time else 0)
 
                 if iters_since_update >= triangulation_update_period:
                     model.update_triangulation(incremental=True)
@@ -324,11 +343,11 @@ def train(args, pipeline_args, model_args, optimizer_args, dataset_args):
 
         with open(f"{out_dir}/stats.csv", "w") as f:
             f.write(
-                "iteration,loss,color_loss,opacity_loss,quant_loss,w_depth,num_points,test_psnr\n"
+                "iteration,loss,color_loss,opacity_loss,depth_loss,quant_loss,w_depth,num_points,test_psnr,position_grad,att_dc_grad,att_sh_grad,density_grad\n"
             )
             for i in range(len(loss_over_time)):
                 f.write(
-                    f"{i},{loss_over_time[i]},{color_loss_over_time[i]},{opacity_loss_over_time[i]},{quant_loss_over_time[i]},{w_depth_over_time[i]},{num_points_over_time[i]},{test_psnr_over_time[i]}\n"
+                    f"{i},{loss_over_time[i]},{color_loss_over_time[i]},{opacity_loss_over_time[i]},{depth_loss_over_time[i]},{quant_loss_over_time[i]},{w_depth_over_time[i]},{num_points_over_time[i]},{test_psnr_over_time[i]},{position_grad_over_time[i]},{att_dc_grad_over_time[i]},{att_sh_grad_over_time[i]},{density_grad_over_time[i]}\n"
                 )
 
         model.save_ply(f"{out_dir}/scene.ply")

@@ -276,10 +276,12 @@ class RadFoamScene(torch.nn.Module):
             start_point = torch.broadcast_to(start_point, rays.shape[:-1])
 
         results = self.pipeline.trace_probe(
-            points,
-            attributes,
-            point_adjacency,
-            point_adjacency_offsets,
+            self.primal_points,
+            self.att_dc,
+            self.att_sh,
+            self.density,
+            self.point_adjacency,
+            self.point_adjacency_offsets,
             rays,
             start_point,
             max_intersections=max_intersections)

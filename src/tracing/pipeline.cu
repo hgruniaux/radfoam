@@ -11,26 +11,17 @@
 
 #define ALPHA_METHOD_DEFAULT 0
 #define ALPHA_METHOD_SQUARED_DENSITY 1
-#define ALPHA_METHOD_POWER_DENSITY 2
 
 #if ENABLE_SQUARED_DENSITY
 #define ALPHA_METHOD ALPHA_METHOD_SQUARED_DENSITY
-#elif ENABLE_POWER_DENSITY
-#define ALPHA_METHOD ALPHA_METHOD_POWER_DENSITY
 #else
 #define ALPHA_METHOD ALPHA_METHOD_DEFAULT
 #endif
 
 namespace radfoam {
-// Constants used by the ALPHA_METHOD_POWER_DENSITY
-constexpr float ALPHA_POWER = 10.0f;
-constexpr float ALPHA_X_OFFSET = 1.f;
-
 __device__ inline float compute_alpha(float s_primal, float delta_t) {
 #if ALPHA_METHOD == ALPHA_METHOD_SQUARED_DENSITY
     const float density = s_primal * s_primal;
-#elif ALPHA_METHOD == ALPHA_METHOD_POWER_DENSITY
-    const float density = powf(s_primal + ALPHA_X_OFFSET, ALPHA_POWER);
 #else // ALPHA_METHOD_DEFAULT
     const float density = s_primal;
 #endif
@@ -45,8 +36,6 @@ __device__ inline float compute_alpha_grad(float s_primal, float delta_t) {
 __device__ inline float compute_dalpha_ds_primal(float s_primal, float delta_t, float alpha, float alpha_grad) {
 #if ALPHA_METHOD == ALPHA_METHOD_SQUARED_DENSITY
     return 2.0f * alpha_grad * s_primal * delta_t * (1 - alpha);
-#elif ALPHA_METHOD == ALPHA_METHOD_POWER_DENSITY
-    return ALPHA_POWER * alpha_grad * powf(s_primal + ALPHA_X_OFFSET, ALPHA_POWER - 1) * delta_t * (1 - alpha);
 #else // ALPHA_METHOD_DEFAULT
     return alpha_grad * delta_t * (1 - alpha);
 #endif
@@ -56,8 +45,6 @@ __device__ inline float compute_dalpha_ddelta_t(float s_primal, float delta_t, f
     if (delta_t > 0.0f) {
 #if ALPHA_METHOD == ALPHA_METHOD_SQUARED_DENSITY
         return alpha_grad * s_primal * s_primal * (1 - alpha);
-#elif ALPHA_METHOD == ALPHA_METHOD_POWER_DENSITY
-        return alpha_grad * powf(s_primal + ALPHA_X_OFFSET, ALPHA_POWER) * (1 - alpha);
 #else // ALPHA_METHOD_DEFAULT
         return alpha_grad * s_primal * (1 - alpha);
 #endif

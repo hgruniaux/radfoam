@@ -6,6 +6,8 @@ from tqdm import tqdm
 import torch
 import pycolmap
 
+generator = np.random.default_rng(42)
+
 
 def get_cam_ray_dirs(camera):
     x = np.arange(camera.width, dtype=np.float32) + 0.5
@@ -19,6 +21,40 @@ def get_cam_ray_dirs(camera):
     ray_dirs = ip_coords / np.linalg.norm(ip_coords, axis=-1, keepdims=True)
     return torch.tensor(ray_dirs, dtype=torch.float32)
 
+def get_cam_ray_dirs_from_error(camera, error_map):
+    x = np.arange(camera.width, dtype=np.float32) + 0.5
+    y = np.arange(camera.height, dtype=np.float32) + 0.5
+    x, y = np.meshgrid(x, y)
+    pix_coords = np.stack([x, y], axis=-1).reshape(-1, 2)
+
+    probabilities = error_map.flatten()
+    probabilities /= np.sum(probabilities)
+
+    N = pix_coords.shape[0]
+    selected_coords = generator.choice(pix_coords, size=N, replace=True, p=probabilities, axis=0)
+    selected_coords += generator.normal(0, 0.5, size=selected_coords.shape)
+
+    ip_coords = camera.cam_from_img(selected_coords)
+    ip_coords = np.concatenate(
+        [ip_coords, np.ones_like(ip_coords[:, :1])], axis=-1
+    )
+    ray_dirs = ip_coords / np.linalg.norm(ip_coords, axis=-1, keepdims=True)
+    return torch.tensor(ray_dirs, dtype=torch.float32)
+
+def get_cam_ray_from_error(camera, image, error_map):
+    ray_dirs = get_cam_ray_dirs_from_error(camera, error_map)
+    c2w = torch.tensor(
+        image.cam_from_world.inverse().matrix(), dtype=torch.float32
+    )
+    world_ray_dirs = torch.einsum(
+        "ij,kj->ik",
+        ray_dirs,
+        c2w[:, :3],
+    )
+    world_ray_origins = c2w[:, 3] + torch.zeros_like(ray_dirs)
+    world_rays = torch.cat([world_ray_origins, world_ray_dirs], dim=-1)
+    world_rays = world_rays.reshape(image.camera.height, image.camera.width, 6)
+    return world_rays
 
 class COLMAPDataset:
     def __init__(self, datadir, split, downsample):

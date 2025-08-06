@@ -1,15 +1,22 @@
 # Model Parameters
-sh_degree: 3
+sh_degree: 0
 init_points: 131_072
-final_points: 2_097_152
+final_points: 1_572_864               # init points * 12
 activation_scale: 1
 device: cuda
 
 # Pipeline Parameters
-iterations: 20_000
-densify_from: 2_000
+iterations: 8_000
+densify_from: 500
 densify_until: 11_000
 densify_factor: 1.15
+probe_from: 100_000
+probe_every: 100
+probe_sample_size: 0.001
+error_sampling_min_weight: 0.00001
+error_sampling_decay: 0.9
+error_sampling_warmup: 300
+error_sampling_update_freq: 50
 white_background: true
 quantile_weight: 1e-4
 viewer: false                          # Flag to use viewer
@@ -30,5 +37,5 @@ dataset: "colmap"
 data_path: "data"
 scene: "classroom"
 patch_based: false
-downsample: [4, 2]                     # Image downsample factors
+downsample: [2, 1]                     # Image downsample factors
 downsample_iterations: [0, 5_000]

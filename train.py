@@ -20,10 +20,17 @@ from radfoam_model.scene import RadFoamScene
 from radfoam_model.utils import psnr
 import radfoam
 
+# Import error sampling components
+from error_sampling import ErrorBasedRaySampler
+from error_aware_data_handler import ErrorAwareDataHandler, create_error_aware_data_handler
+
 
 seed = 42
 torch.random.manual_seed(seed)
 np.random.seed(seed)
+
+def relu_based_conditional_loss(x, y):
+    return torch.where(x >= 0, (x - y) ** 2, torch.zeros_like(x))
 
 
 def train(args, pipeline_args, model_args, optimizer_args, dataset_args):
@@ -50,31 +57,73 @@ def train(args, pipeline_args, model_args, optimizer_args, dataset_args):
         with open(f"{out_dir}/config.yaml", "w") as yaml_file:
             yaml.dump(vars(args), yaml_file, default_flow_style=False)
 
-    # Setting up dataset
+    # Setting up dataset with error-based sampling
     iter2downsample = dict(
         zip(
             dataset_args.downsample_iterations,
             dataset_args.downsample,
         )
     )
-    train_data_handler = DataHandler(
-        dataset_args, rays_per_batch=1_000_000, device=device
-    )
+    
+    # Create error-aware data handler or fallback to standard DataHandler
+    if pipeline_args.error_sampling:
+        train_data_handler = create_error_aware_data_handler(
+            dataset_args=dataset_args,
+            rays_per_batch=1_000_000,
+            device=str(device),  # Convert to string for compatibility
+            decay=pipeline_args.error_sampling_decay,
+            warmup_iterations=pipeline_args.error_sampling_warmup,
+            update_frequency=pipeline_args.error_sampling_update_freq,
+            min_error_weight=pipeline_args.error_sampling_min_weight,
+        )
+        print(f"Using error-based ray sampling")
+    else:
+        train_data_handler = DataHandler(
+            dataset_args, rays_per_batch=1_000_000, device=str(device)
+        )
+        print("Using uniform ray sampling (error sampling disabled)")
+    
     downsample = iter2downsample[0]
     train_data_handler.reload(split="train", downsample=downsample)
 
     test_data_handler = DataHandler(
-        dataset_args, rays_per_batch=0, device=device
+        dataset_args, rays_per_batch=0, device=str(device)
     )
     test_data_handler.reload(
         split="test", downsample=min(dataset_args.downsample)
     )
-    test_ray_batch_fetcher = radfoam.BatchFetcher(
-        test_data_handler.rays, batch_size=1, shuffle=False
-    )
-    test_rgb_batch_fetcher = radfoam.BatchFetcher(
-        test_data_handler.rgbs, batch_size=1, shuffle=False
-    )
+    
+    # Try to use original radfoam.BatchFetcher for test data (faster)
+    try:
+        test_ray_batch_fetcher = radfoam.BatchFetcher(
+            test_data_handler.rays, batch_size=1, shuffle=False
+        )
+        test_rgb_batch_fetcher = radfoam.BatchFetcher(
+            test_data_handler.rgbs, batch_size=1, shuffle=False
+        )
+    except AttributeError:
+        # Fallback if radfoam.BatchFetcher not available
+        class SimpleBatchFetcher:
+            def __init__(self, data, batch_size=1, shuffle=False):
+                self.data = data
+                self.batch_size = batch_size
+                self.current_idx = 0
+            
+            def next(self):
+                if self.current_idx >= len(self.data):
+                    self.current_idx = 0
+                
+                end_idx = min(self.current_idx + self.batch_size, len(self.data))
+                batch = self.data[self.current_idx:end_idx]
+                self.current_idx = end_idx
+                return [batch]
+        
+        test_ray_batch_fetcher = SimpleBatchFetcher(
+            test_data_handler.rays, batch_size=1, shuffle=False
+        )
+        test_rgb_batch_fetcher = SimpleBatchFetcher(
+            test_data_handler.rgbs, batch_size=1, shuffle=False
+        )
 
     # Define viewer settings
     viewer_options = {
@@ -88,7 +137,6 @@ def train(args, pipeline_args, model_args, optimizer_args, dataset_args):
 
     # Setting up pipeline
     rgb_loss = nn.SmoothL1Loss(reduction="none")
-    depth_loss = nn.L1Loss(reduction="none")
 
     # Setting up model
     model = RadFoamScene(
@@ -155,8 +203,14 @@ def train(args, pipeline_args, model_args, optimizer_args, dataset_args):
 
         torch.cuda.synchronize()
 
-        data_iterator = train_data_handler.get_iter()
-        ray_batch, rgb_batch, alpha_batch, normal_batch, depth_batch, instance_batch = next(data_iterator)
+        if pipeline_args.error_sampling:
+            # Error-aware data handler
+            data_iterator = train_data_handler.get_iter_with_error_sampling(iteration=0)
+            ray_batch, rgb_batch, alpha_batch, normal_batch, depth_batch, instance_batch, ray_indices = next(data_iterator)
+        else:
+            # Standard data handler
+            data_iterator = train_data_handler.get_iter()
+            ray_batch, rgb_batch, alpha_batch, normal_batch, depth_batch, instance_batch = next(data_iterator)
 
         triangulation_update_period = 1
         iters_since_update = 1
@@ -176,6 +230,9 @@ def train(args, pipeline_args, model_args, optimizer_args, dataset_args):
         att_sh_grad_over_time = []
         density_grad_over_time = []
 
+        # Track error sampling statistics
+        error_stats_history = []
+
         with tqdm.trange(pipeline_args.iterations) as train:
             for i in train:
                 if viewer is not None:
@@ -187,8 +244,13 @@ def train(args, pipeline_args, model_args, optimizer_args, dataset_args):
                     train_data_handler.reload(
                         split="train", downsample=downsample
                     )
-                    data_iterator = train_data_handler.get_iter()
-                    ray_batch, rgb_batch, alpha_batch, normal_batch, depth_batch, instance_batch = next(data_iterator)
+
+                    if pipeline_args.error_sampling:
+                        data_iterator = train_data_handler.get_iter_with_error_sampling(iteration=i)
+                        ray_batch, rgb_batch, alpha_batch, normal_batch, depth_batch, instance_batch, ray_indices = next(data_iterator)
+                    else:
+                        data_iterator = train_data_handler.get_iter()
+                        ray_batch, rgb_batch, alpha_batch, normal_batch, depth_batch, instance_batch = next(data_iterator)
 
                 depth_quantiles = (
                     torch.rand(*ray_batch.shape[:-1], 2, device=device)
@@ -218,11 +280,28 @@ def train(args, pipeline_args, model_args, optimizer_args, dataset_args):
                     2 * i / pipeline_args.iterations, 1
                 )
 
-                normalized_depth = depth[:, 1] / 100.0
-                # print(f"Depth: std={normalized_depth.std().item():.3f}, mean={normalized_depth.mean().item():.3f}, min={normalized_depth.min().item():.3f}, max={normalized_depth.max().item():.3f}")
-                # print(f"Ground truth depth: std={depth_batch.std().item():.3f}, mean={depth_batch.mean().item():.3f}, min={depth_batch.min().item():.3f}, max={depth_batch.max().item():.3f}")
-                depth_loss_value =  ((depth_batch - normalized_depth) ** 2).mean()
-                loss = color_loss.mean() + opacity_loss + w_depth * quant_loss + 0.001 * depth_loss_value
+                depth_loss_value = relu_based_conditional_loss(
+                    depth[..., 0],
+                    pipeline_args.depth_scale * depth_batch
+                ).mean() if pipeline_args.depth_loss else torch.tensor(0.0, device=device)
+
+                loss = color_loss.mean() + opacity_loss + w_depth * quant_loss + pipeline_args.depth_coeff * depth_loss_value
+
+                # Update error map for error-based sampling
+                if pipeline_args.error_sampling:
+                    # Calculate per-ray color loss for error map update
+                    per_ray_color_loss = color_loss.mean(dim=-1) if len(color_loss.shape) > 1 else color_loss
+                    train_data_handler.update_error_map(per_ray_color_loss)
+                    
+                    # Log error statistics periodically
+                    if i % 100 == 0:
+                        error_stats = train_data_handler.get_error_statistics()
+                        error_stats_history.append(error_stats)
+                        if not pipeline_args.debug:
+                            writer.add_scalar("error_sampling/mean_error", 
+                                            error_stats.get('mean_error', 0), i)
+                            writer.add_scalar("error_sampling/error_range", 
+                                            error_stats.get('error_range', 0), i)
 
                 model.optimizer.zero_grad(set_to_none=True)
 
@@ -231,12 +310,16 @@ def train(args, pipeline_args, model_args, optimizer_args, dataset_args):
                 event.record()
                 loss.backward()
                 event.synchronize()
-                ray_batch, rgb_batch, alpha_batch, normal_batch, depth_batch, instance_batch = next(data_iterator)
+                
+                if pipeline_args.error_sampling:
+                    ray_batch, rgb_batch, alpha_batch, normal_batch, depth_batch, instance_batch, ray_indices = next(data_iterator)
+                else:
+                    ray_batch, rgb_batch, alpha_batch, normal_batch, depth_batch, instance_batch = next(data_iterator)
 
-                position_grad_over_time.append(model.primal_points.grad.norm().item())
-                att_dc_grad_over_time.append(model.att_dc.grad.norm().item())
-                att_sh_grad_over_time.append(model.att_sh.grad.norm().item())
-                density_grad_over_time.append(model.density.grad.norm().item())
+                position_grad_over_time.append(model.primal_points.grad.norm().item() if model.primal_points.grad is not None else 0.0)
+                att_dc_grad_over_time.append(model.att_dc.grad.norm().item() if model.att_dc.grad is not None else 0.0)
+                att_sh_grad_over_time.append(model.att_sh.grad.norm().item() if model.att_sh.grad is not None else 0.0)
+                density_grad_over_time.append(model.density.grad.norm().item() if model.density.grad is not None else 0.0)
 
                 model.optimizer.step()
                 model.update_learning_rate(i)
@@ -275,7 +358,7 @@ def train(args, pipeline_args, model_args, optimizer_args, dataset_args):
                     )
                     writer.add_scalar("test/psnr", test_psnr, i)
 
-                    test_psnr_over_time.append(test_psnr.item())
+                    test_psnr_over_time.append(float(test_psnr))
             
                     writer.add_scalar(
                         "lr/points_lr", model.xyz_scheduler_args(i), i
@@ -341,6 +424,7 @@ def train(args, pipeline_args, model_args, optimizer_args, dataset_args):
                 if viewer is not None and viewer.is_closed():
                     break
 
+        # Save training statistics including error sampling data
         with open(f"{out_dir}/stats.csv", "w") as f:
             f.write(
                 "iteration,loss,color_loss,opacity_loss,depth_loss,quant_loss,w_depth,num_points,test_psnr,position_grad,att_dc_grad,att_sh_grad,density_grad\n"
@@ -349,6 +433,12 @@ def train(args, pipeline_args, model_args, optimizer_args, dataset_args):
                 f.write(
                     f"{i},{loss_over_time[i]},{color_loss_over_time[i]},{opacity_loss_over_time[i]},{depth_loss_over_time[i]},{quant_loss_over_time[i]},{w_depth_over_time[i]},{num_points_over_time[i]},{test_psnr_over_time[i]},{position_grad_over_time[i]},{att_dc_grad_over_time[i]},{att_sh_grad_over_time[i]},{density_grad_over_time[i]}\n"
                 )
+        
+        # Save error sampling statistics if available
+        if error_stats_history:
+            import json
+            with open(f"{out_dir}/error_sampling_stats.json", "w") as f:
+                json.dump(error_stats_history, f, indent=2)
 
         model.save_ply(f"{out_dir}/scene.ply")
         model.save_pt(f"{out_dir}/model.pt")

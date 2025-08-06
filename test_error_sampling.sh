@@ -1,0 +1,5 @@
+time ssh epic "cd radfoam && source .venv/bin/activate && python train.py -c configs/classroom.yaml --experiment_name error_sampling_none"
+time ssh epic "cd radfoam && source .venv/bin/activate && python train.py -c configs/classroom.yaml --error_sampling --error_sampling_decay 0.9 --experiment_name error_sampling_decay_9"
+time ssh epic "cd radfoam && source .venv/bin/activate && python train.py -c configs/classroom.yaml --error_sampling --error_sampling_decay 0.6 --experiment_name error_sampling_decay_6"
+time ssh epic "cd radfoam && source .venv/bin/activate && python train.py -c configs/classroom.yaml --error_sampling --error_sampling_decay 0.2 --experiment_name error_sampling_decay_2"
+time ssh epic "cd radfoam && source .venv/bin/activate && python train.py -c configs/classroom.yaml --error_sampling --error_sampling_decay 0.1 --experiment_name error_sampling_decay_1"

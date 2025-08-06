@@ -23,19 +23,6 @@ else()
   add_compile_definitions(ENABLE_SQUARED_DENSITY=0)
 endif()
 
-set(ENABLE_POWER_DENSITY ON CACHE BOOL "Enable power density (can not be used with squared density)")
-if(ENABLE_POWER_DENSITY)
-  message(STATUS "Power density enabled")
-  add_compile_definitions(ENABLE_POWER_DENSITY=1)
-else()
-  message(STATUS "Power density disabled")
-  add_compile_definitions(ENABLE_POWER_DENSITY=0)
-endif()
-
-if (ENABLE_SQUARED_DENSITY AND ENABLE_POWER_DENSITY)
-  message(FATAL_ERROR "Cannot enable both squared density and power density")
-endif()
-
 add_compile_definitions(-DPYBIND11_DETAILED_ERROR_MESSAGES=1)
 
 set(GPU_DEBUG

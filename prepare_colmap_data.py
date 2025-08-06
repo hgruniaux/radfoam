@@ -25,17 +25,24 @@ def main(args):
         raise ValueError("Database file already exists")
 
     database = pycolmap.Database(database_path)
+    sift_options = pycolmap.SiftExtractionOptions()
+    sift_options.max_num_features = 16000
+    sift_options.estimate_affine_shape = 1
+    sift_options.domain_size_pooling = 1
 
     pycolmap.extract_features(
         database_path,
         images_dir,
         camera_mode=pycolmap.CameraMode.SINGLE,
         camera_model=args.camera_model,
+        sift_options=sift_options
     )
 
     print(f"Imported {database.num_images} images to {database_path}")
 
-    pycolmap.match_exhaustive(database_path)
+    math_sift_options = pycolmap.SiftMatchingOptions()
+    math_sift_options.guided_matching = 1
+    pycolmap.match_exhaustive(database_path, sift_options=math_sift_options)
 
     print(f"Feature matching completed")
 

@@ -80,89 +80,30 @@ class DataHandler:
         self.train_instances = None
 
         if split == "train":
-            if self.args.patch_based:
-                dw = self.img_wh[0] - (self.img_wh[0] % self.patch_size)
-                dh = self.img_wh[1] - (self.img_wh[1] % self.patch_size)
-                w_inds = np.linspace(0, self.img_wh[0] - 1, dw, dtype=int)
-                h_inds = np.linspace(0, self.img_wh[1] - 1, dh, dtype=int)
+            self.train_rays = einops.rearrange(
+                self.rays, "n h w r -> (n h w) r"
+            )
+            self.train_rgbs = einops.rearrange(
+                self.rgbs, "n h w c -> (n h w) c"
+            )
+            self.train_alphas = einops.rearrange(
+                self.alphas, "n h w 1 -> (n h w) 1"
+            )
 
-                self.train_rays = self.rays[:, h_inds, :, :]
-                self.train_rays = self.train_rays[:, :, w_inds, :]
-                self.train_rgbs = self.rgbs[:, h_inds, :, :]
-                self.train_rgbs = self.train_rgbs[:, :, w_inds, :]
-
-                if self.normals is not None:
-                    self.train_normals = self.normals[:, h_inds, :, :]
-                    self.train_normals = self.train_normals[:, :, w_inds, :]
-
-                if self.depths is not None:
-                    self.train_depths = self.depths[:, h_inds, :, :]
-                    self.train_depths = self.train_depths[:, :, w_inds, :]
-
-                if self.instances is not None:
-                    self.train_instances = self.instances[:, h_inds, :, :]
-                    self.train_instances = self.train_instances[:, :, w_inds, :]
-
-                self.train_rays = einops.rearrange(
-                    self.train_rays,
-                    "n (x ph) (y pw) r -> (n x y) ph pw r",
-                    ph=self.patch_size,
-                    pw=self.patch_size,
+            if self.normals is not None:
+                self.train_normals = einops.rearrange(
+                    self.normals, "n h w c -> (n h w) c"
                 )
-                self.train_rgbs = einops.rearrange(
-                    self.train_rgbs,
-                    "n (x ph) (y pw) c -> (n x y) ph pw c",
-                    ph=self.patch_size,
-                    pw=self.patch_size,
+            if self.depths is not None:
+                self.train_depths = einops.rearrange(
+                    self.depths, "n h w -> (n h w)"
                 )
-                if self.normals is not None:
-                    self.train_normals = einops.rearrange(
-                        self.train_normals,
-                        "n (x ph) (y pw) c -> (n x y) ph pw c",
-                        ph=self.patch_size,
-                        pw=self.patch_size,
-                    )
-                if self.depths is not None:
-                    self.train_depths = einops.rearrange(
-                        self.train_depths,
-                        "n (x ph) (y pw) -> (n x y) ph pw",
-                        ph=self.patch_size,
-                        pw=self.patch_size,
-                    )
-                if self.instances is not None:
-                    self.train_instances = einops.rearrange(
-                        self.train_instances,
-                        "n (x ph) (y pw) c -> (n x y) ph pw c",
-                        ph=self.patch_size,
-                        pw=self.patch_size,
-                    )
-
-                self.batch_size = self.rays_per_batch // (self.patch_size**2)
-            else:
-                self.train_rays = einops.rearrange(
-                    self.rays, "n h w r -> (n h w) r"
-                )
-                self.train_rgbs = einops.rearrange(
-                    self.rgbs, "n h w c -> (n h w) c"
-                )
-                self.train_alphas = einops.rearrange(
-                    self.alphas, "n h w 1 -> (n h w) 1"
+            if self.instances is not None:
+                self.train_instances = einops.rearrange(
+                    self.instances, "n h w c -> (n h w) c"
                 )
 
-                if self.normals is not None:
-                    self.train_normals = einops.rearrange(
-                        self.normals, "n h w c -> (n h w) c"
-                    )
-                if self.depths is not None:
-                    self.train_depths = einops.rearrange(
-                        self.depths, "n h w -> (n h w)"
-                    )
-                if self.instances is not None:
-                    self.train_instances = einops.rearrange(
-                        self.instances, "n h w c -> (n h w) c"
-                    )
-
-                self.batch_size = self.rays_per_batch
+            self.batch_size = self.rays_per_batch
 
     def get_iter(self):
         ray_batch_fetcher = radfoam.BatchFetcher(
@@ -175,26 +116,17 @@ class DataHandler:
             self.train_alphas, self.batch_size, shuffle=True
         )
 
-        if self.train_normals is not None:
-            normal_batch_fetcher = radfoam.BatchFetcher(
-                self.train_normals, self.batch_size, shuffle=True
-            )
-        else:
-            normal_batch_fetcher = None
+        normal_batch_fetcher = radfoam.BatchFetcher(
+            self.train_normals, self.batch_size, shuffle=True
+        ) if self.train_normals is not None else None
 
-        if self.train_depths is not None:
-            depth_batch_fetcher = radfoam.BatchFetcher(
-                self.train_depths, self.batch_size, shuffle=True
-            )
-        else:
-            depth_batch_fetcher = None
+        depth_batch_fetcher = radfoam.BatchFetcher(
+            self.train_depths, self.batch_size, shuffle=True
+        ) if self.train_depths is not None else None
 
-        if self.train_instances is not None:
-            instance_batch_fetcher = radfoam.BatchFetcher(
-                self.train_instances, self.batch_size, shuffle=True
-            )
-        else:
-            instance_batch_fetcher = None
+        instance_batch_fetcher = radfoam.BatchFetcher(
+            self.train_instances, self.batch_size, shuffle=True
+        ) if self.train_instances is not None else None
 
         while True:
             ray_batch = ray_batch_fetcher.next()

@@ -50,6 +50,14 @@ class PipelineParams(ParamGroup):
         self.probe_sample_size = 0.05
         self.white_background = True
         self.quantile_weight = 1e-4
+        self.error_sampling = False
+        self.error_sampling_decay = 0.9
+        self.error_sampling_warmup = 1_000
+        self.error_sampling_update_freq = 100
+        self.error_sampling_min_weight = 1e-4
+        self.depth_loss = False
+        self.depth_coeff = 0.1
+        self.depth_scale = 1
         self.experiment_name = ""
         self.debug = False
         self.viewer = False
